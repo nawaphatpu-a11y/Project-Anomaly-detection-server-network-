@@ -1,0 +1,10 @@
+# ข้อมูล/โมเดลที่ pipeline สร้างเองอัตโนมัติ (ไม่ต้อง commit — dashboard bootstrap ให้เองถ้าไม่มี)
+data/
+models/
+evaluation_report.csv
+
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.streamlit/secrets.toml
