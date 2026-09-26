@@ -27,11 +27,13 @@ if alerts.empty:
     st.success("ยังไม่มีการแจ้งเตือน ระบบปกติดี ✅")
     st.stop()
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns([1, 1, 1])
 with col1:
     type_filter = st.multiselect("กรองตามประเภท", options=sorted(alerts["alert_type"].dropna().unique()))
 with col2:
     server_filter = st.multiselect("กรองตามเครื่อง", options=sorted(alerts["server_id"].unique()))
+with col3:
+    sort_mode = st.selectbox("เรียงลำดับ", ["ความรุนแรงมากสุดก่อน", "เวลาล่าสุดก่อน"])
 
 filtered = alerts.copy()
 if type_filter:
@@ -39,7 +41,11 @@ if type_filter:
 if server_filter:
     filtered = filtered[filtered["server_id"].isin(server_filter)]
 
-filtered = filtered.sort_values("timestamp", ascending=False)
+# anomaly_score ยิ่งติดลบมาก ยิ่งผิดปกติมาก -- "รุนแรงมากสุดก่อน" จึงเรียงจากน้อยไปมาก (ascending)
+if sort_mode == "ความรุนแรงมากสุดก่อน":
+    filtered = filtered.sort_values("anomaly_score", ascending=True)
+else:
+    filtered = filtered.sort_values("timestamp", ascending=False)
 
 st.caption(f"อัปเดตล่าสุด: {alerts['timestamp'].max()}")
 st.metric("จำนวนการแจ้งเตือนทั้งหมด (session)", len(alerts))

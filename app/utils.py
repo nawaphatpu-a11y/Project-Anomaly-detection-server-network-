@@ -29,7 +29,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent  # app/utils.py -> root �
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
 BUFFER_MAX_ROWS = 3000          # กันไม่ให้ session state โตไม่หยุดระหว่างเดโมยาวๆ
-ANOMALY_INJECT_PROB = 0.04      # โอกาสที่ live reading รอบนี้จะเป็น anomaly (จำลองเพื่อโชว์เดโม)
+ANOMALY_INJECT_PROB = 0.04      # โอกาสเฉลี่ยที่ live reading รอบนี้จะเป็น anomaly (จำลองเพื่อโชว์เดโม)
+
+# ให้แต่ละเครื่องมีนิสัยไม่เท่ากัน (บางเครื่อง "ป่วยง่าย" กว่าเครื่องอื่น) ไม่งั้นกราฟ
+# "Anomaly แยกตามเครื่อง" จะไม่มีความหมายอะไรเลย เพราะทุกเครื่องสุ่มด้วยโอกาสเท่ากันหมด
+# ตัวเลขที่เห็นต่างกันเป็นแค่ noise ล้วนๆ ไม่ได้สะท้อนว่าเครื่องไหนแย่จริง
+def _server_weight(server_id: str, server_ids: list) -> float:
+    idx = server_ids.index(server_id) if server_id in server_ids else 0
+    # กระจายตัวคูณระหว่าง 0.4x ถึง 2.2x แบบ deterministic ตามลำดับเครื่อง
+    return 0.4 + (idx % 6) * 0.36
 
 
 def _ensure_pipeline_has_run():
@@ -83,7 +91,7 @@ def _minmax(value: float, col: str, scale_params: dict) -> float:
     return float(np.clip((value - lo) / (hi - lo), 0.0, 1.0))
 
 
-def _simulate_raw_reading(server_id: str) -> dict:
+def _simulate_raw_reading(server_id: str, anomaly_prob: float) -> dict:
     """สุ่มค่า metric หนึ่งแถว จำลองการอ่านค่าจริงจาก server ณ เวลาปัจจุบัน
     (สุ่มช่วงใกล้เคียงกับข้อมูลที่ generate_data.py ใช้เทรนโมเดล)"""
     cpu = np.random.normal(30, 6)
@@ -93,7 +101,7 @@ def _simulate_raw_reading(server_id: str) -> dict:
     resp = abs(np.random.normal(90, 20))
 
     injected_type = None
-    if random.random() < ANOMALY_INJECT_PROB:
+    if random.random() < anomaly_prob:
         injected_type = random.choice(["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION"])
 
     if injected_type == "CPU_SPIKE":
@@ -177,7 +185,8 @@ def tick(n_new: int = 5):
     new_rows = []
     for _ in range(n_new):
         server_id = random.choice(server_ids)
-        reading = _simulate_raw_reading(server_id)
+        prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
+        reading = _simulate_raw_reading(server_id, prob)
 
         hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
         X = _build_feature_row(reading, scale_params, feature_cols, hist)
