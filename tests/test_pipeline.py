@@ -166,3 +166,31 @@ def test_time_based_split_no_row_overlap_and_chronological():
         train_max = train.loc[train["server_id"] == server, "timestamp"].max()
         test_min = test.loc[test["server_id"] == server, "timestamp"].min()
         assert train_max < test_min, "test set ต้องมาทีหลัง train set เสมอ (time-based split)"
+
+
+# ---------- ฟังก์ชันใหม่: timestamp error, severity, IQR ----------
+
+def test_fix_timestamp_errors_removes_malformed_rows():
+    df = pd.DataFrame({
+        "server_id": ["SRV-001"] * 4,
+        "timestamp": ["2026-01-01 00:00:00", "not-a-date", "2026-01-01 00:05:00", ""],
+        "cpu_usage": [10, 20, 30, 40],
+    })
+    cleaned = etl.fix_timestamp_errors(df)
+    assert len(cleaned) == 2  # เหลือแค่ 2 แถวที่ parse ได้จริง
+    assert cleaned["timestamp"].notna().all()
+
+
+def test_add_severity_maps_known_types_and_defaults_none():
+    df = pd.DataFrame({"anomaly_type": ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION", "NONE", "WEIRD_UNKNOWN"]})
+    result = etl.add_severity(df)
+    assert result["severity_level"].tolist() == ["High", "High", "Medium", "None", "None"]
+
+
+def test_iqr_baseline_flags_far_outliers_not_normal_points():
+    # ข้อมูล train แจกแจงปกติแคบๆ รอบ 0 ส่วน test มีทั้งจุดปกติและจุดที่ไกลลิบ (outlier ชัดเจน)
+    rng = np.random.default_rng(0)
+    train = pd.DataFrame({"x": rng.normal(0, 1, 500)})
+    test = pd.DataFrame({"x": [0.1, -0.2, 50.0, -50.0]})  # 2 จุดปกติ, 2 จุดไกลลิบ
+    pred = train_model.iqr_baseline(train, test)
+    assert list(pred) == [0, 0, 1, 1]

@@ -55,6 +55,7 @@ TREND_COL_NORM = "response_time_dev_from_roll_norm"
 ISO_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW]
 LOF_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_NORM]
 ZSCORE_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW]  # z-score standardize เองในตัวอยู่แล้ว scale ไม่มีผล
+IQR_FEATURE_COLS = ZSCORE_FEATURE_COLS  # IQR ก็เป็น per-feature univariate เหมือน z-score ไม่ไวต่อ scale เช่นกัน
 
 # รวม column ทั้งหมดที่ใช้จริง (สำหรับเซฟไปกับ output ให้ตรวจสอบย้อนหลังได้)
 ALL_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW, TREND_COL_NORM]
@@ -125,6 +126,17 @@ def zscore_baseline(X_train: pd.DataFrame, X_test: pd.DataFrame, threshold: floa
     return (z.abs() > threshold).any(axis=1).astype(int)
 
 
+def iqr_baseline(X_train: pd.DataFrame, X_test: pd.DataFrame, k: float = 1.5) -> np.ndarray:
+    # Benchmark ตัวที่ 3 ตามแผน (Z-score/IQR) -- Tukey's fence แบบเดียวกับที่ box plot
+    # บนหน้า dashboard ใช้วาดขอบเขต "ปกติ" เทียบ Q1/Q3 จาก train เท่านั้น (เหตุผลเดียวกับ
+    # Z-score: ห้ามให้ค่า Q1/Q3 ของ test มาปนตอนตั้งเกณฑ์) ถ้าค่า test หลุดขอบเขตของ
+    # feature ใด feature หนึ่ง ถือว่าผิดปกติ
+    q1, q3 = X_train.quantile(0.25), X_train.quantile(0.75)
+    iqr = q3 - q1
+    lower, upper = q1 - k * iqr, q3 + k * iqr
+    return ((X_test < lower) | (X_test > upper)).any(axis=1).astype(int)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train anomaly detection models with a held-out test split")
     parser.add_argument("--infile", type=str, default="data/processed/metrics_clean.csv")
@@ -170,8 +182,13 @@ def main():
     Xtr, Xte = train_df[ZSCORE_FEATURE_COLS].fillna(0), test_df[ZSCORE_FEATURE_COLS].fillna(0)
     test_df["pred_zscore"] = zscore_baseline(Xtr, Xte)
 
-    keep_cols = ["server_id", "timestamp", "is_anomaly", "anomaly_type",
-                 "pred_isoforest", "pred_lof", "pred_zscore"] + ALL_FEATURE_COLS
+    print("Computing IQR baseline (benchmark only)...")
+    Xtr, Xte = train_df[IQR_FEATURE_COLS].fillna(0), test_df[IQR_FEATURE_COLS].fillna(0)
+    test_df["pred_iqr"] = iqr_baseline(Xtr, Xte)
+
+    keep_cols = ["server_id", "timestamp", "is_anomaly", "anomaly_type", "severity_level",
+                 "cpu_usage", "response_time",  # ค่าดิบ (หน่วยจริง) เก็บไว้ให้ evaluate.py วาดกราฟอ่านง่าย
+                 "pred_isoforest", "pred_lof", "pred_zscore", "pred_iqr"] + ALL_FEATURE_COLS
 
     out_dir = os.path.dirname(args.outfile)
     if out_dir:
@@ -182,7 +199,7 @@ def main():
     test_df[keep_cols].to_csv(args.outfile, index=False)
 
     print(f"Saved predictions (test set only) -> {args.outfile}")
-    for col in ["pred_isoforest", "pred_lof", "pred_zscore"]:
+    for col in ["pred_isoforest", "pred_lof", "pred_zscore", "pred_iqr"]:
         print(f"  {col}: flagged {int(test_df[col].sum()):,} rows as anomaly (out of {len(test_df):,} test rows)")
 
     # ---------- เทรนโมเดลตัวสุดท้ายสำหรับใช้งานจริง (live scoring) ----------
@@ -209,11 +226,17 @@ def main():
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
 
+    # server_roles: ให้ app/utils.py แปะ role ไปกับ reading ที่จำลอง live ได้ -- ใช้ทำ
+    # Box Plot "CPU/Memory แยกตาม role" ใน dashboard (role ของแต่ละเครื่องคงที่ตลอด
+    # จึงหยิบจาก mapping เดียวได้เลย ไม่ต้องคำนวณใหม่)
+    server_roles = df.drop_duplicates("server_id").set_index("server_id")["role"].to_dict()
+
     joblib.dump({
         "model": final_model,
         "feature_cols": ISO_FEATURE_COLS,
         "trend_window": 12,          # ต้องตรงกับ window ใน etl.py::add_trend_feature
         "server_ids": sorted(df["server_id"].unique().tolist()),
+        "server_roles": server_roles,
     }, args.model_out)
     print(f"Saved deployment model -> {args.model_out}")
 

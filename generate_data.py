@@ -18,13 +18,20 @@ from datetime import datetime, timedelta
 SERVER_ROLES = ["Web Server", "Database Server", "App Server"]
 
 
+SERVER_ROLES = ["Web Server", "Database Server", "App Server"]
+# Dim_Server ตาม ER Diagram/Star Schema ที่ออกแบบไว้ระบุ field "location" -- ของเดิมไม่มี
+SERVER_LOCATIONS = ["Bangkok-DC1", "Bangkok-DC2", "Nonthaburi-DC1"]
+
+
 def make_server_profiles(n_servers: int, rng: np.random.Generator) -> pd.DataFrame:
     # สุ่มสร้างโปรไฟล์พื้นฐานของแต่ละเครื่อง (ค่าเฉลี่ยปกติของแต่ละ metric)
     roles = rng.choice(SERVER_ROLES, size=n_servers)
+    locations = rng.choice(SERVER_LOCATIONS, size=n_servers)
     profiles = pd.DataFrame({
         "server_id": [f"SRV-{i+1:03d}" for i in range(n_servers)],
         "hostname": [f"host-{i+1:03d}" for i in range(n_servers)],
         "role": roles,
+        "location": locations,
         # ค่าเฉลี่ย "ปกติ" ของแต่ละเครื่อง (สุ่มต่างกันเล็กน้อย)
         "base_cpu": rng.uniform(20, 40, size=n_servers),
         "base_mem": rng.uniform(30, 50, size=n_servers),
@@ -168,6 +175,7 @@ def main():
             "server_id": profile["server_id"],
             "hostname": profile["hostname"],
             "role": profile["role"],
+            "location": profile["location"],
             "timestamp": timestamps,
             **baseline,
         })

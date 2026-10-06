@@ -18,6 +18,23 @@ import os
 import numpy as np
 import pandas as pd
 
+# Dim_AlertType ตามที่ออกแบบไว้ใน Star Schema -- ผูกระดับความรุนแรงเข้ากับชนิด anomaly
+# CPU_SPIKE/NETWORK_SURGE พุ่งกะทันหันจนกระทบบริการได้ทันที = High, RESPONSE_DEGRADATION
+# ค่อยๆ แย่ลง (ยังพอมีเวลาตอบสนอง) = Medium, "Other" (โมเดลเจอเองไม่ตรงชนิดที่รู้จัก) = Low
+# เพราะยังไม่รู้สาเหตุแน่ชัด ต้องดูรายละเอียดเพิ่มก่อนตัดสินความรุนแรงจริง
+SEVERITY_MAP = {
+    "CPU_SPIKE": "High",
+    "NETWORK_SURGE": "High",
+    "RESPONSE_DEGRADATION": "Medium",
+    "Other": "Low",
+    "NONE": "None",
+}
+
+
+def add_severity(df: pd.DataFrame, type_col: str = "anomaly_type") -> pd.DataFrame:
+    df["severity_level"] = df[type_col].map(SEVERITY_MAP).fillna("None")
+    return df
+
 
 def fix_data_errors(df: pd.DataFrame) -> pd.DataFrame:
     # แก้ 'ค่าที่เป็นไปไม่ได้จริง' (Data Error) เท่านั้น
@@ -45,6 +62,22 @@ def fix_data_errors(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def fix_timestamp_errors(df: pd.DataFrame) -> pd.DataFrame:
+    # Data Error อีกชนิดที่แผนงานระบุไว้ (timestamp ผิดรูปแบบ) แต่ยังไม่เคยเช็คมาก่อน
+    # errors="coerce" ทำให้ค่าที่ parse ไม่ได้กลายเป็น NaT แทนที่จะโยน error ทั้งไฟล์
+    # ต่างจาก missing value เชิงตัวเลข (เติมด้วย forward-fill ได้) timestamp ที่หายไป
+    # เติมแทนไม่ได้อย่างมีความหมาย (ไม่รู้ว่าควรเป็นเวลาไหน) จึง Remove ทิ้งไปเลยตามแผน
+    before = len(df)
+    parsed = pd.to_datetime(df["timestamp"], format="mixed", errors="coerce")
+    n_bad = int(parsed.isna().sum())
+
+    df = df.loc[parsed.notna()].copy()
+    df["timestamp"] = parsed.loc[parsed.notna()]
+
+    print(f"[fix_timestamp_errors] found {n_bad:,} rows with malformed timestamp -> removed (out of {before:,} rows)")
+    return df
+
+
 def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
     # เติม missing value ด้วย Forward-Fill แยกตามแต่ละ server
     # (ใช้ Forward-Fill เพราะเป็นข้อมูล time-series -- ค่าก่อนหน้ามักใกล้เคียงค่าปัจจุบันมากกว่าค่าเฉลี่ยรวม)
@@ -61,9 +94,10 @@ def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     # เพิ่ม feature เชิงเวลา ตามที่วางแผนไว้ใน Step 3.2 / 4.1
-    # FIX: format="mixed" -- จำเป็นเมื่อรวมข้อมูลจากหลายแหล่ง (เช่น metrics.csv ที่มี
-    # timestamp ละเอียดถึงไมโครวินาที ผสมกับ independent_test_set.csv ที่ไม่มี) ไม่งั้น
-    # pd.to_datetime จะ error เพราะ format ไม่ตรงกันทุกแถว
+    # timestamp ผ่าน fix_timestamp_errors() มาแล้ว (เป็น datetime64 ที่ parse ได้ครบทุกแถว)
+    # เรียก pd.to_datetime ซ้ำตรงนี้อีกชั้นเป็นแค่ safety net เผื่อมีคนเรียกฟังก์ชันนี้ตรงๆ
+    # โดยข้าม fix_timestamp_errors ไป (เช่น เขียนเทสต์แยก) -- ไม่มีผลเสียถ้า column เป็น
+    # datetime64 อยู่แล้ว pandas จะคืนค่าเดิมกลับมาเฉยๆ
     df["timestamp"] = pd.to_datetime(df["timestamp"], format="mixed")
     df["hour"] = df["timestamp"].dt.hour
     df["day_of_week"] = df["timestamp"].dt.dayofweek  # 0=จันทร์
@@ -118,11 +152,13 @@ def main():
     print(f"Loaded: {len(df):,} rows")
 
     # ---------- Transform ----------
-    df = fix_data_errors(df)          # 1) แก้ Data Error (คนละส่วนกับ True Anomaly)
+    df = fix_data_errors(df)          # 1) แก้ Data Error เชิงตัวเลข (คนละส่วนกับ True Anomaly)
+    df = fix_timestamp_errors(df)     # 1.1) แก้ Data Error เชิง timestamp (ต้องทำก่อน sort/group ตามเวลา)
     df = handle_missing(df)           # 2) เติม missing value
     df = add_time_features(df)        # 3) เพิ่ม time-based feature
     df = add_engineered_features(df)  # 4) เพิ่ม engineered feature
     df = add_trend_feature(df)        # 4.1) เพิ่ม trend feature (จับ RESPONSE_DEGRADATION)
+    df = add_severity(df)             # 4.2) เพิ่ม severity_level (Dim_AlertType)
 
     # NOTE: Min-Max Normalization ย้ายไปทำใน train_model.py แล้ว (FIX: data leakage --
     # เดิมคำนวณ min/max ตรงนี้จากข้อมูล "ทั้งหมด" รวมส่วนที่จะกลายเป็น test set ใน

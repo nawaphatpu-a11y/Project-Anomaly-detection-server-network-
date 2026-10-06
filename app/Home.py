@@ -121,6 +121,15 @@ with col_f:
     fig = px.box(df, y="network_in", points="outliers")
     st.plotly_chart(fig, use_container_width=True)
 
+if "role" in df.columns:
+    col_g, col_h = st.columns(2)
+    with col_g:
+        st.subheader("การกระจายตัว CPU แยกตาม Role")
+        st.plotly_chart(px.box(df, x="role", y="cpu_usage", color="role"), use_container_width=True)
+    with col_h:
+        st.subheader("การกระจายตัว Memory แยกตาม Role")
+        st.plotly_chart(px.box(df, x="role", y="memory_usage", color="role"), use_container_width=True)
+
 st.subheader("Top 10 เหตุการณ์ผิดปกติล่าสุด")
 recent_alerts = df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10)
 if not recent_alerts.empty:

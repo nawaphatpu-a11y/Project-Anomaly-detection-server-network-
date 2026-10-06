@@ -26,6 +26,8 @@ import pandas as pd
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent  # app/utils.py -> root ของโปรเจกต์
+sys.path.insert(0, str(PROJECT_ROOT))  # ให้ import etl.py (อยู่ที่ root) ได้จากในนี้
+from etl import SEVERITY_MAP  # ใช้ mapping เดียวกับ pipeline offline ไม่ต้อง duplicate
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
 BUFFER_MAX_ROWS = 3000          # กันไม่ให้ session state โตไม่หยุดระหว่างเดโมยาวๆ
@@ -60,6 +62,39 @@ def _ensure_pipeline_has_run():
             if result.returncode != 0:
                 st.error(f"รัน {script} ไม่สำเร็จ:\n{result.stderr[-2000:]}")
                 st.stop()
+
+
+def ensure_evaluation_has_run():
+    # เหมือน _ensure_pipeline_has_run() แต่สำหรับไฟล์ผลประเมิน (evaluation_report*.csv)
+    # ที่หน้า Model Evaluation ต้องใช้ -- แยกออกมาต่างหาก ไม่รวมเข้า _ensure_pipeline_has_run()
+    # เพราะ evaluate.py ไม่จำเป็นต่อการสคอร์ live เลย (หน้า Home/Alerts ไม่ต้องรอมัน)
+    # เรียกจากหน้า Model Evaluation เท่านั้น ตอนเปิดหน้านั้นจริงๆ ค่อยรัน
+    _ensure_pipeline_has_run()  # ต้องมี predictions.csv ก่อน evaluate.py ถึงจะรันได้
+
+    eval_path = PROJECT_ROOT / "data/processed/evaluation_report.csv"
+    indep_report = PROJECT_ROOT / "data/processed/evaluation_report_independent.csv"
+    indep_csv = PROJECT_ROOT / "independent_test_set_v2.csv"
+
+    todo = []
+    if not eval_path.exists():
+        todo.append("evaluate.py")
+    if not indep_csv.exists():
+        todo.append("Generate_data_AI.py")
+    if not indep_report.exists():
+        todo.append(["evaluate_independent.py", "--infile", "independent_test_set_v2.csv"])
+
+    if not todo:
+        return
+
+    with st.spinner("กำลังรัน evaluate.py ครั้งแรก (สำหรับหน้า Model Evaluation)..."):
+        for item in todo:
+            cmd = [sys.executable] + (item if isinstance(item, list) else [item])
+            result = subprocess.run(
+                [cmd[0], str(PROJECT_ROOT / cmd[1])] + cmd[2:],
+                cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                st.warning(f"รัน {cmd[1]} ไม่สำเร็จ (หน้านี้จะโชว์ได้ไม่ครบ):\n{result.stderr[-1000:]}")
 
 
 @st.cache_resource
@@ -181,12 +216,16 @@ def tick(n_new: int = 5):
     feature_cols = bundle["feature_cols"]
     window = bundle["trend_window"]
     server_ids = bundle["server_ids"]
+    # .get() กันพังกับโมเดลเก่าที่เทรนไว้ก่อนเพิ่ม server_roles เข้า bundle (ต้อง
+    # train_model.py ใหม่ถึงจะมี key นี้ -- ถ้ายังไม่มี ให้ทุกเครื่องเป็น "Unknown" ไปก่อน)
+    server_roles = bundle.get("server_roles", {})
 
     new_rows = []
     for _ in range(n_new):
         server_id = random.choice(server_ids)
         prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
         reading = _simulate_raw_reading(server_id, prob)
+        reading["role"] = server_roles.get(server_id, "Unknown")
 
         hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
         X = _build_feature_row(reading, scale_params, feature_cols, hist)
@@ -197,6 +236,7 @@ def tick(n_new: int = 5):
         reading["is_anomaly"] = int(pred == -1)
         reading["anomaly_score"] = round(float(score), 4)
         reading["alert_type"] = reading["_injected_type"] or ("Other" if reading["is_anomaly"] else None)
+        reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None") if reading["is_anomaly"] else "None"
         reading.pop("_injected_type", None)
 
         hist.append(reading["response_time"])  # อัปเดตประวัติ "หลัง" สคอร์รอบนี้แล้ว (กันเห็นค่าตัวเอง)

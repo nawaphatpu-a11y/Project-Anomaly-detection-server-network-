@@ -25,7 +25,9 @@ import joblib
 import pandas as pd
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
-from etl import fix_data_errors, handle_missing, add_time_features, add_engineered_features, add_trend_feature
+from etl import (fix_data_errors, fix_timestamp_errors, handle_missing, add_time_features,
+                  add_engineered_features, add_trend_feature, add_severity)
+from evaluate import plot_true_vs_predicted
 
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
@@ -65,10 +67,12 @@ def main():
 
     # ---------- ทำความสะอาด + สร้าง feature ด้วยตรรกะเดียวกับตอนเทรน (import จาก etl.py) ----------
     df = fix_data_errors(df)
+    df = fix_timestamp_errors(df)
     df = handle_missing(df)
     df = add_time_features(df)
     df = add_engineered_features(df)
     df = add_trend_feature(df, window=window)  # ใช้ window เดียวกับตอนเทรน (จาก bundle)
+    df = add_severity(df)
 
     normalize_cols = list(scale_info.keys())
     df = apply_min_max(df, normalize_cols, scale_info)
@@ -101,6 +105,10 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
     report.to_csv(args.outfile)
     print(f"\nSaved -> {args.outfile}")
+
+    plot_path = os.path.join(out_dir or ".", "evaluation_scatter_independent.png")
+    plot_true_vs_predicted(df, plot_path)
+    print(f"Saved visualization -> {plot_path}")
 
 
 if __name__ == "__main__":
