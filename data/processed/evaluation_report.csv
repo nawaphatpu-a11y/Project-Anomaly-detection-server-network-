@@ -1,0 +1,5 @@
+model,TP,FP,TN,FN,precision,recall,f1
+Isolation Forest (main),313,29,16890,48,0.915,0.867,0.89
+LOF (benchmark),311,95,16824,50,0.766,0.861,0.811
+Z-score (benchmark),333,184,16735,28,0.644,0.922,0.759
+IQR (benchmark),353,832,16087,8,0.298,0.978,0.457

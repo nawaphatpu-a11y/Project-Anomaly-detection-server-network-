@@ -1,0 +1,2 @@
+dataset,TP,FP,TN,FN,precision,recall,f1
+Independent test set (ChatGPT-generated),210,3216,3566,8,0.061,0.963,0.115

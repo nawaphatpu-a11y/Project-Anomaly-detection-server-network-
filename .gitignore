@@ -1,7 +1,19 @@
-# ข้อมูล/โมเดลที่ pipeline สร้างเองอัตโนมัติ (ไม่ต้อง commit — dashboard bootstrap ให้เองถ้าไม่มี)
-data/
-models/
-evaluation_report.csv
+# ข้อมูลดิบ + ไฟล์ขั้นกลางที่ตัวแอปไม่ได้อ่านตอนรันจริง (ใหญ่ สร้างใหม่ได้ง่าย) -- ไม่ commit
+data/raw/
+data/processed/metrics_clean.csv
+predictions.csv
+
+# โมเดล retrain แบบทดลอง (ไม่ใช่โมเดล deploy จริง) -- ไม่ commit
+models/isolation_forest_retrained.joblib
+models/scale_params_retrained.json
+
+# NOTE: ไฟล์ด้านล่างนี้ "ไม่" ใส่ไว้ที่นี่ (ตั้งใจ commit เข้า repo จริง) เพราะเป็นไฟล์
+# ที่ตัวแอป "อ่านตอนรัน" จริงๆ -- commit ไว้ล่วงหน้าให้ Streamlit Cloud เจอพร้อมใช้ทันที
+# ตอน container ใหม่ตื่น ไม่ต้องรอ bootstrap รัน pipeline ใหม่ทุกครั้ง:
+#   models/isolation_forest.joblib, data/processed/scale_params.json,
+#   data/processed/evaluation_report*.csv, data/processed/evaluation_scatter*.png,
+#   independent_test_set_v2.csv
+# ถ้าแก้โมเดล/ข้อมูลแล้วต้อง commit ไฟล์พวกนี้ใหม่ด้วยเสมอ ไม่งั้นเว็บจะยังใช้ของเก่าอยู่
 
 venv/
 __pycache__/
