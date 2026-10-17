@@ -323,3 +323,40 @@ def test_diagnosis_text_follows_requested_language():
     assert en["cause_type"] == th["cause_type"] == "CPU_SPIKE"
     assert en["probable_cause"] != th["probable_cause"]
     assert en["suggested_check"] != th["suggested_check"]
+
+
+import server_view
+
+
+def _readings():
+    rows = []
+    for server, role, flags in [("A", "Web Server", [0, 0, 0, 1]), ("B", "App Server", [0, 1, 0, 0]),
+                                ("C", "App Server", [0, 0, 0, 0])]:
+        for i, flag in enumerate(flags):
+            rows.append({"server_id": server, "role": role, "timestamp": pd.Timestamp("2026-01-01") + pd.Timedelta(minutes=i),
+                         "is_anomaly": flag, "cpu_usage": 30.0, "memory_usage": 40.0, "response_time": 90.0})
+    return pd.DataFrame(rows)
+
+
+def test_server_overview_status_and_ordering():
+    table = server_view.overview(_readings())
+    status = dict(zip(table["server_id"], table["status"]))
+    assert status == {"A": "alert", "B": "watch", "C": "ok"}
+    assert table["server_id"].tolist() == ["A", "B", "C"]
+    assert table.set_index("server_id").loc["B", "alert_rate"] == 25.0
+    assert server_view.status_counts(table) == {"alert": 1, "watch": 1, "ok": 1}
+
+
+def test_server_overview_uses_latest_reading_by_time_not_row_order():
+    df = _readings().sort_values("timestamp", ascending=False)
+    status = dict(zip(*server_view.overview(df)[["server_id", "status"]].values.T))
+    assert status["A"] == "alert"
+
+
+def test_normal_band_uses_role_baseline_and_handles_unknown_role():
+    baselines = {"Web Server": {"cpu_usage": {"median": 30.0, "mad": 4.0}}}
+    low, high = server_view.normal_band(baselines, "Web Server", "cpu_usage")
+    assert low < 30.0 < high
+    assert round(high - 30.0, 2) == round(30.0 - low, 2)
+    assert server_view.normal_band(baselines, "Cache Server", "cpu_usage") is None
+    assert server_view.normal_band(None, "Web Server", "cpu_usage") is None

@@ -1,0 +1,31 @@
+name: Streamlit Keepalive
+
+# ป้องกันแอปหลับ (Streamlit Community Cloud พักแอปเองหลังไม่มี traffic จริง 12 ชม.)
+# รันทุก 4 ชม. เผื่อระยะไว้มาก (3 เท่าของ margin ที่ต้องการ) ด้วย headless browser จริง
+# เพราะ HTTP ping ธรรมดาใช้ไม่ได้ผล (ดูเหตุผลใน scripts/keepalive.py)
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:  # กดรันเองได้จากแท็บ Actions บน GitHub ด้วย (เผื่ออยากปลุกก่อนเวลา)
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Visit app and wake if sleeping
+        env:
+          STREAMLIT_APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+        run: python scripts/keepalive.py

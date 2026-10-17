@@ -22,6 +22,7 @@ from i18n import get_lang, t
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
 BUFFER_MAX_ROWS = 3000
+HISTORY_PER_SERVER = 400
 ANOMALY_INJECT_PROB = 0.04
 
 def _server_weight(server_id: str, server_ids: list) -> float:
@@ -220,8 +221,8 @@ def tick(n_new: int = 5):
         hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
         X = _build_feature_row(reading, scale_params, feature_cols, hist, role_baselines)
 
-        pred = model.predict(X)[0]
         score = model.decision_function(X)[0]
+        pred = -1 if score < 0 else 1
 
         reading["is_anomaly"] = int(pred == -1)
         reading["anomaly_score"] = round(float(score), 4)
@@ -241,7 +242,8 @@ def tick(n_new: int = 5):
         new_rows.append(reading)
 
     new_df = pd.DataFrame(new_rows)
-    st.session_state.readings = pd.concat([st.session_state.readings, new_df], ignore_index=True).tail(BUFFER_MAX_ROWS)
+    combined = pd.concat([st.session_state.readings, new_df], ignore_index=True)
+    st.session_state.readings = combined.groupby("server_id", group_keys=False).tail(HISTORY_PER_SERVER)
 
     new_alerts = new_df[new_df["is_anomaly"] == 1]
     if not new_alerts.empty:
