@@ -35,3 +35,11 @@ def normal_band(baselines, role, metric, k=3.0):
 def status_counts(table):
     counts = table["status"].value_counts()
     return {s: int(counts.get(s, 0)) for s in STATUS_ORDER}
+
+
+def pick_index(options, saved, fallback=0):
+    return options.index(saved) if saved in options else fallback
+
+
+def keep_valid(saved, options):
+    return [item for item in (saved or []) if item in options]

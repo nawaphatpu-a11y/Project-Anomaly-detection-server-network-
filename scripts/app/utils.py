@@ -13,6 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -265,3 +266,36 @@ def localize_alerts(df, lang=None):
         out.at[i, "top_signals"] = format_signals(decode_signals(row.get("signals_raw")), lang)
         out.at[i, "suggested_check"] = suggested_check(cause_type, row.get("role"), lang)
     return out
+
+
+DEFAULT_REFRESH_SECONDS = 4
+DEFAULT_ROWS_PER_TICK = 5
+
+
+def live_settings():
+    refresh = st.sidebar.slider(
+        t("sidebar.refresh"), 2, 15, st.session_state.get("refresh_seconds", DEFAULT_REFRESH_SECONDS),
+        format=f"%d {t('unit.seconds')}")
+    rows = st.sidebar.slider(
+        t("sidebar.rows"), 1, 20, st.session_state.get("rows_per_tick", DEFAULT_ROWS_PER_TICK),
+        format=f"%d {t('unit.rows')}")
+    paused = st.sidebar.checkbox(t("sidebar.pause"), value=st.session_state.get("live_paused", False))
+    st.session_state["refresh_seconds"] = refresh
+    st.session_state["rows_per_tick"] = rows
+    st.session_state["live_paused"] = paused
+    st.sidebar.caption(t("sidebar.caption", rows=rows, seconds=refresh))
+    if st.sidebar.button(t("sidebar.clear")):
+        st.session_state.readings = pd.DataFrame()
+        st.session_state.alerts = pd.DataFrame()
+        st.session_state.resp_history = {}
+        for stale in ("alert_pool", "alert_pool_signature", "alert_pool_time", "saved_alert_choice"):
+            st.session_state.pop(stale, None)
+    return refresh, rows, paused
+
+
+def live_update(refresh, rows, paused, key):
+    if paused:
+        st.sidebar.info(t("sidebar.paused_note"))
+        return None
+    st_autorefresh(interval=refresh * 1000, key=key)
+    return tick(n_new=rows)

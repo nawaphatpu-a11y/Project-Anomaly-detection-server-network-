@@ -6,11 +6,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import plotly.express as px
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
-from server_view import STATUS_ICON, normal_band, overview, status_counts
-from utils import HISTORY_PER_SERVER, init_buffer, load_model_bundle, localize_alerts, tick
+from server_view import STATUS_ICON, normal_band, overview, pick_index, status_counts
+from utils import HISTORY_PER_SERVER, init_buffer, live_settings, live_update, load_model_bundle, localize_alerts
 
 METRICS = ["cpu_usage", "memory_usage", "network_in", "network_out", "response_time"]
 BAND_METRICS = {"cpu_usage", "memory_usage", "network_in", "network_out", "response_time"}
@@ -19,8 +18,10 @@ st.set_page_config(page_title="Servers", page_icon="🖥️", layout="wide")
 init_buffer()
 language_selector()
 
-st_autorefresh(interval=4000, key="servers_autorefresh")
-tick(n_new=3)
+st.sidebar.header(t("sidebar.settings"))
+refresh_seconds, rows_per_tick, paused = live_settings()
+
+live_update(refresh_seconds, rows_per_tick, paused, "servers_autorefresh")
 
 st.title(t("servers.title"))
 st.caption(t("servers.caption"))
@@ -51,17 +52,31 @@ st.dataframe(shown.rename(columns=column_labels(shown.columns)), use_container_w
 st.caption(t("servers.status_help"))
 
 status_of = dict(zip(table["server_id"], table["status"]))
-role_of = dict(zip(table["server_id"], table["role"]))
-server = st.selectbox(
-    t("servers.select"),
-    table["server_id"].tolist(),
-    format_func=lambda s: f"{s} | {role_of[s]} | {STATUS_ICON[status_of[s]]} {t(f'status.{status_of[s]}')}",
-)
+role_of = {**(bundle.get("server_roles", {}) if bundle else {}), **dict(zip(table["server_id"], table["role"]))}
+server_ids = sorted(bundle["server_ids"]) if bundle else sorted(table["server_id"])
+
+if st.button(t("servers.jump")):
+    st.session_state["selected_server"] = table["server_id"].iloc[0]
+saved_server = st.session_state.get("selected_server") or table["server_id"].iloc[0]
+
+
+def server_label(s):
+    if s not in status_of:
+        return f"{s} | {role_of.get(s, '')} | {t('servers.no_data_label')}"
+    return f"{s} | {role_of[s]} | {STATUS_ICON[status_of[s]]} {t(f'status.{status_of[s]}')}"
+
+
+server = st.selectbox(t("servers.select"), server_ids, index=pick_index(server_ids, saved_server),
+                      format_func=server_label)
+st.session_state["selected_server"] = server
 
 st.divider()
 st.subheader(t("servers.detail", server=server))
 
 srv = df[df["server_id"] == server].sort_values("timestamp")
+if srv.empty:
+    st.info(t("servers.no_data"))
+    st.stop()
 role = role_of[server]
 latest = srv.iloc[-1]
 row = table[table["server_id"] == server].iloc[0]
@@ -72,7 +87,9 @@ c2.metric(f"{t('col.memory_usage')} ({t('servers.latest')})", f"{latest['memory_
 c3.metric(f"{t('col.response_time')} ({t('servers.latest')})", f"{latest['response_time']:.0f}")
 c4.metric(t("col.alert_rate"), f"{row['alert_rate']:.1f}%")
 
-metric = st.selectbox(t("servers.metric"), METRICS, format_func=lambda m: t(f"col.{m}"))
+metric = st.selectbox(t("servers.metric"), METRICS, index=pick_index(METRICS, st.session_state.get("selected_metric")),
+                      format_func=lambda m: t(f"col.{m}"))
+st.session_state["selected_metric"] = metric
 st.caption(t("servers.history", n=len(srv), max=HISTORY_PER_SERVER))
 if len(srv) < 20:
     st.info(t("servers.few", n=len(srv)))

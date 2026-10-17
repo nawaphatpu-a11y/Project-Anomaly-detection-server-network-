@@ -6,29 +6,19 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
-import pandas as pd
 import plotly.express as px
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
-
 from i18n import column_labels, language_selector, t, type_label
-from utils import init_buffer, localize_alerts, tick
+from utils import init_buffer, live_settings, live_update, localize_alerts
 
 st.set_page_config(page_title="Server & Network Health", page_icon="📊", layout="wide")
 init_buffer()
 language_selector()
 
 st.sidebar.header(t("sidebar.settings"))
-refresh_seconds = st.sidebar.slider(t("sidebar.refresh"), 2, 15, 4, format=f"%d {t('unit.seconds')}")
-rows_per_tick = st.sidebar.slider(t("sidebar.rows"), 1, 20, 5, format=f"%d {t('unit.rows')}")
-st.sidebar.caption(t("sidebar.caption", rows=rows_per_tick, seconds=refresh_seconds))
-if st.sidebar.button(t("sidebar.clear")):
-    st.session_state.readings = pd.DataFrame()
-    st.session_state.alerts = pd.DataFrame()
-    st.session_state.resp_history = {}
+refresh_seconds, rows_per_tick, paused = live_settings()
 
-st_autorefresh(interval=refresh_seconds * 1000, key="dashboard_autorefresh")
-new_readings = tick(n_new=rows_per_tick)
+live_update(refresh_seconds, rows_per_tick, paused, "dashboard_autorefresh")
 
 df = st.session_state.readings
 
