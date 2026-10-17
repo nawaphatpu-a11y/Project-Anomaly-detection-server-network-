@@ -6,20 +6,18 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
-from utils import init_buffer, live_settings, localize_alerts, tick
+from utils import init_buffer, live_settings, live_update, localize_alerts
 
 st.set_page_config(page_title="Alerts", page_icon="🔔", layout="wide")
 init_buffer()
 language_selector()
 
 st.sidebar.header(t("sidebar.settings"))
-refresh_seconds, rows_per_tick = live_settings()
+refresh_seconds, rows_per_tick, paused = live_settings()
 
-st_autorefresh(interval=refresh_seconds * 1000, key="alerts_autorefresh")
-tick(n_new=rows_per_tick)
+live_update(refresh_seconds, rows_per_tick, paused, "alerts_autorefresh")
 
 st.title(t("alerts.title"))
 
@@ -32,14 +30,14 @@ if alerts.empty:
 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 with col1:
     type_filter = st.multiselect(t("filter.type"), options=sorted(alerts["alert_type"].dropna().unique()),
-                                 format_func=type_label)
+                                 format_func=type_label, key="filter_type")
 with col2:
-    server_filter = st.multiselect(t("filter.server"), options=sorted(alerts["server_id"].unique()))
+    server_filter = st.multiselect(t("filter.server"), options=sorted(alerts["server_id"].unique()), key="filter_server")
 with col3:
     severity_filter = st.multiselect(t("filter.severity"), options=["High", "Medium", "Low"],
-                                     format_func=severity_label)
+                                     format_func=severity_label, key="filter_severity")
 with col4:
-    sort_mode = st.selectbox(t("sort.label"), ["severity", "recent"], format_func=lambda k: t(f"sort.{k}"))
+    sort_mode = st.selectbox(t("sort.label"), ["severity", "recent"], format_func=lambda k: t(f"sort.{k}"), key="sort_mode")
 
 filtered = alerts.copy()
 if type_filter:
@@ -85,12 +83,13 @@ candidates = filtered.head(50).reset_index(drop=True)
 if candidates.empty:
     st.info(t("details.no_match"))
     st.stop()
-choice = st.selectbox(
-    t("details.select"),
-    candidates.index,
-    format_func=lambda i: f"{candidates.loc[i, 'timestamp']} | {candidates.loc[i, 'server_id']} | {type_label(candidates.loc[i, 'alert_type'])}",
-)
-selected = candidates.loc[choice]
+candidates["alert_key"] = candidates["timestamp"].astype(str) + " | " + candidates["server_id"]
+labels = dict(zip(candidates["alert_key"], candidates["alert_key"] + " | " + candidates["alert_type"].map(type_label)))
+if st.session_state.get("alert_choice") not in labels:
+    st.session_state["alert_choice"] = candidates["alert_key"].iloc[0]
+choice = st.selectbox(t("details.select"), candidates["alert_key"].tolist(),
+                      format_func=lambda k: labels[k], key="alert_choice")
+selected = candidates[candidates["alert_key"] == choice].iloc[0]
 d1, d2 = st.columns(2)
 d1.metric(t("details.cause"), selected["probable_cause"])
 d2.metric(t("details.role"), selected["role"])

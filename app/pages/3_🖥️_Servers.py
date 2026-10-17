@@ -6,11 +6,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import plotly.express as px
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
 from server_view import STATUS_ICON, normal_band, overview, status_counts
-from utils import HISTORY_PER_SERVER, init_buffer, live_settings, load_model_bundle, localize_alerts, tick
+from utils import HISTORY_PER_SERVER, init_buffer, live_settings, live_update, load_model_bundle, localize_alerts
 
 METRICS = ["cpu_usage", "memory_usage", "network_in", "network_out", "response_time"]
 BAND_METRICS = {"cpu_usage", "memory_usage", "network_in", "network_out", "response_time"}
@@ -20,10 +19,9 @@ init_buffer()
 language_selector()
 
 st.sidebar.header(t("sidebar.settings"))
-refresh_seconds, rows_per_tick = live_settings()
+refresh_seconds, rows_per_tick, paused = live_settings()
 
-st_autorefresh(interval=refresh_seconds * 1000, key="servers_autorefresh")
-tick(n_new=rows_per_tick)
+live_update(refresh_seconds, rows_per_tick, paused, "servers_autorefresh")
 
 st.title(t("servers.title"))
 st.caption(t("servers.caption"))
@@ -55,10 +53,14 @@ st.caption(t("servers.status_help"))
 
 status_of = dict(zip(table["server_id"], table["status"]))
 role_of = dict(zip(table["server_id"], table["role"]))
+server_ids = sorted(table["server_id"])
+if st.session_state.get("server_choice") not in server_ids:
+    st.session_state["server_choice"] = table["server_id"].iloc[0]
 server = st.selectbox(
     t("servers.select"),
-    table["server_id"].tolist(),
+    server_ids,
     format_func=lambda s: f"{s} | {role_of[s]} | {STATUS_ICON[status_of[s]]} {t(f'status.{status_of[s]}')}",
+    key="server_choice",
 )
 
 st.divider()
@@ -75,7 +77,7 @@ c2.metric(f"{t('col.memory_usage')} ({t('servers.latest')})", f"{latest['memory_
 c3.metric(f"{t('col.response_time')} ({t('servers.latest')})", f"{latest['response_time']:.0f}")
 c4.metric(t("col.alert_rate"), f"{row['alert_rate']:.1f}%")
 
-metric = st.selectbox(t("servers.metric"), METRICS, format_func=lambda m: t(f"col.{m}"))
+metric = st.selectbox(t("servers.metric"), METRICS, format_func=lambda m: t(f"col.{m}"), key="server_metric")
 st.caption(t("servers.history", n=len(srv), max=HISTORY_PER_SERVER))
 if len(srv) < 20:
     st.info(t("servers.few", n=len(srv)))
