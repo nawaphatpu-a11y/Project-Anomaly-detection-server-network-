@@ -2,6 +2,9 @@
 เทสต์หน่วยของ generate_data.py, etl.py และ train_model.py
 รัน: pytest -v
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -268,9 +271,55 @@ def test_diagnose_suggestion_depends_on_role():
     web = diagnose.diagnose(features, role="Web Server")["suggested_check"]
     unknown = diagnose.diagnose(features, role="Cache Server")["suggested_check"]
     assert "slow queries" in db and db != web
-    assert unknown == diagnose.CAUSES["RESPONSE_DEGRADATION"]["checks"]["default"]
+    assert unknown == diagnose.CAUSES["RESPONSE_DEGRADATION"]["en"]["checks"]["default"]
 
 
 def test_diagnose_tolerates_missing_and_nan_features():
     out = diagnose.diagnose({"cpu_usage_role_z": float("nan")})
     assert out["cause_type"] == "UNCLASSIFIED"
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+import i18n
+
+
+def test_every_ui_text_exists_in_both_languages_with_same_placeholders():
+    import string
+
+    def placeholders(text):
+        return {name for _, name, _, _ in string.Formatter().parse(text) if name}
+
+    assert set(i18n.TEXT["en"]) == set(i18n.TEXT["th"])
+    for key in i18n.TEXT["en"]:
+        assert placeholders(i18n.TEXT["en"][key]) == placeholders(i18n.TEXT["th"][key]), key
+
+
+def test_translation_switches_language_and_formats_values():
+    assert i18n.t("sidebar.clear", lang="EN") == "Clear all data"
+    assert i18n.t("sidebar.clear", lang="TH") == "ล้างข้อมูลทั้งหมด"
+    assert "5" in i18n.t("sidebar.caption", lang="TH", rows=5, seconds=4)
+    assert i18n.t("no.such.key", lang="TH") == "no.such.key"
+
+
+def test_label_helpers_fall_back_to_the_raw_value():
+    assert i18n.type_label("CPU_SPIKE", "TH") != "CPU_SPIKE"
+    assert i18n.type_label("SOMETHING_NEW", "TH") == "SOMETHING_NEW"
+    assert i18n.column_labels(["cpu_usage", "unknown"], "EN") == {"cpu_usage": "CPU"}
+
+
+def test_signals_survive_encode_decode_and_render_in_both_languages():
+    signals = [("network_in_role_z", 72.2), ("cpu_usage_role_z", -2.1)]
+    assert diagnose.decode_signals(diagnose.encode_signals(signals)) == signals
+    assert diagnose.format_signals(signals, "en") == "Network in +72.2, CPU -2.1"
+    assert diagnose.format_signals(signals, "th") == "Network เข้า +72.2, CPU -2.1"
+    assert diagnose.decode_signals(None) == []
+    assert diagnose.format_signals([], "th") == diagnose.NO_SIGNAL["th"]
+
+
+def test_diagnosis_text_follows_requested_language():
+    features = _features(cpu_usage_role_z=9.0)
+    en = diagnose.diagnose(features, role="Web Server", lang="en")
+    th = diagnose.diagnose(features, role="Web Server", lang="th")
+    assert en["cause_type"] == th["cause_type"] == "CPU_SPIKE"
+    assert en["probable_cause"] != th["probable_cause"]
+    assert en["suggested_check"] != th["suggested_check"]

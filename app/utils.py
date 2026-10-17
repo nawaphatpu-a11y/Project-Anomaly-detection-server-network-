@@ -16,8 +16,9 @@ import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from diagnose import diagnose
+from diagnose import cause_title, decode_signals, diagnose, format_signals, suggested_check
 from etl import SEVERITY_MAP, ROLE_METRICS
+from i18n import get_lang, t
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
 BUFFER_MAX_ROWS = 3000
@@ -34,14 +35,14 @@ def _ensure_pipeline_has_run():
     if model_path.exists() and scale_path.exists():
         return
 
-    with st.spinner("No model found. Running the pipeline for the first time (generate_data → etl → train_model)..."):
+    with st.spinner(t("msg.pipeline")):
         for script in ["generate_data.py", "etl.py", "train_model.py"]:
             result = subprocess.run(
                 [sys.executable, str(PROJECT_ROOT / script)],
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True,
             )
             if result.returncode != 0:
-                st.error(f"{script} failed:\n{result.stderr[-2000:]}")
+                st.error(t("msg.script_failed", script=script, detail=result.stderr[-2000:]))
                 st.stop()
 
 
@@ -63,7 +64,7 @@ def ensure_evaluation_has_run():
     if not todo:
         return
 
-    with st.spinner("Running evaluate.py for the first time (needed by the Model Evaluation page)..."):
+    with st.spinner(t("msg.evaluate")):
         for item in todo:
             cmd = [sys.executable] + (item if isinstance(item, list) else [item])
             result = subprocess.run(
@@ -71,7 +72,7 @@ def ensure_evaluation_has_run():
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True,
             )
             if result.returncode != 0:
-                st.warning(f"{cmd[1]} failed (this page will be incomplete):\n{result.stderr[-1000:]}")
+                st.warning(t("msg.evaluate_failed", script=cmd[1], detail=result.stderr[-1000:]))
 
 
 @st.cache_resource
@@ -81,7 +82,7 @@ def load_model_bundle():
     try:
         return joblib.load(PROJECT_ROOT / MODEL_PATH), None
     except FileNotFoundError:
-        return None, f"Model file not found at {MODEL_PATH} even after running the pipeline automatically. Try running it manually"
+        return None, t("msg.model_missing", path=MODEL_PATH)
 
 
 @st.cache_resource
@@ -228,15 +229,11 @@ def tick(n_new: int = 5):
             features = {**X.iloc[0].to_dict(), **_role_z_features(reading, role_baselines)}
             diagnosis = diagnose(features, role=role)
             reading["alert_type"] = "Other" if diagnosis["cause_type"] == "UNCLASSIFIED" else diagnosis["cause_type"]
-            reading["probable_cause"] = diagnosis["probable_cause"]
-            reading["top_signals"] = diagnosis["top_signals"]
-            reading["suggested_check"] = diagnosis["suggested_check"]
+            reading["signals_raw"] = diagnosis["signals_raw"]
             reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None")
         else:
             reading["alert_type"] = None
-            reading["probable_cause"] = None
-            reading["top_signals"] = None
-            reading["suggested_check"] = None
+            reading["signals_raw"] = None
             reading["severity_level"] = "None"
         reading.pop("_injected_type", None)
 
@@ -251,3 +248,18 @@ def tick(n_new: int = 5):
         st.session_state.alerts = pd.concat([st.session_state.alerts, new_alerts], ignore_index=True).tail(BUFFER_MAX_ROWS)
 
     return new_df
+
+
+def localize_alerts(df, lang=None):
+    lang = lang or get_lang()
+    out = df.copy()
+    for column in ("probable_cause", "top_signals", "suggested_check"):
+        out[column] = None
+    flagged = out.index[out["is_anomaly"] == 1]
+    for i in flagged:
+        row = out.loc[i]
+        cause_type = "UNCLASSIFIED" if row["alert_type"] == "Other" else row["alert_type"]
+        out.at[i, "probable_cause"] = cause_title(cause_type, lang)
+        out.at[i, "top_signals"] = format_signals(decode_signals(row.get("signals_raw")), lang)
+        out.at[i, "suggested_check"] = suggested_check(cause_type, row.get("role"), lang)
+    return out

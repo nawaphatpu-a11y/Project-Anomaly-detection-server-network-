@@ -47,6 +47,12 @@ latest-anomalies table, and `evaluate.py` writes `cause_diagnosis_report.csv`: o
 cause matches the injected type 100% for CPU_SPIKE and NETWORK_SURGE and about 93% for RESPONSE_DEGRADATION, and about 65% of false
 alarms are left unclassified. The rules were written around the simulated patterns, so these figures are optimistic for real systems.
 
+### Language switch (EN / TH)
+
+The dashboard sidebar has an EN / TH toggle. All UI text lives in `app/i18n.py` (one dictionary per language) and the diagnosis
+texts in `diagnose.py`. Alerts store language-neutral data (type code and raw signals) and the text is built at display time, so
+switching language re-renders existing alerts too. A test checks that both dictionaries have the same keys and placeholders.
+
 ## 3) ประเมินผลกับชุดข้อมูลอิสระ (Step 5 เสริม — สร้างจาก AI คนละตัว)
 
 ```bash
