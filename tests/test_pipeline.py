@@ -224,3 +224,53 @@ def test_role_relative_feature_falls_back_to_global_for_unseen_role():
     unseen["role"] = "Cache Server"
     out = etl.add_role_relative_features(unseen, baselines)
     assert np.isfinite(out["cpu_usage_role_z"].iloc[0])
+
+
+import diagnose
+
+
+def _features(**overrides):
+    base = {"cpu_usage_role_z": 0.0, "memory_usage_role_z": 0.0, "network_in_role_z": 0.0,
+            "network_out_role_z": 0.0, "response_time_role_z": 0.0, "response_time_dev_from_roll": 0.0}
+    base.update(overrides)
+    return base
+
+
+def test_diagnose_cpu_spike():
+    out = diagnose.diagnose(_features(cpu_usage_role_z=9.0, memory_usage_role_z=3.0))
+    assert out["cause_type"] == "CPU_SPIKE"
+    assert out["top_signals"].startswith("CPU")
+
+
+def test_diagnose_network_surge_needs_both_directions():
+    both = diagnose.diagnose(_features(network_in_role_z=8.0, network_out_role_z=7.0))
+    only_in = diagnose.diagnose(_features(network_in_role_z=8.0))
+    assert both["cause_type"] == "NETWORK_SURGE"
+    assert only_in["cause_type"] == "UNCLASSIFIED"
+
+
+def test_diagnose_response_degradation_requires_rising_trend():
+    rising = diagnose.diagnose(_features(response_time_role_z=6.0, response_time_dev_from_roll=20.0))
+    flat = diagnose.diagnose(_features(response_time_role_z=6.0, response_time_dev_from_roll=-5.0))
+    assert rising["cause_type"] == "RESPONSE_DEGRADATION"
+    assert flat["cause_type"] == "UNCLASSIFIED"
+
+
+def test_diagnose_unclassified_when_nothing_stands_out():
+    out = diagnose.diagnose(_features(cpu_usage_role_z=1.0))
+    assert out["cause_type"] == "UNCLASSIFIED"
+    assert out["top_signals"] == "none above 2 MAD"
+
+
+def test_diagnose_suggestion_depends_on_role():
+    features = _features(response_time_role_z=6.0, response_time_dev_from_roll=20.0)
+    db = diagnose.diagnose(features, role="Database Server")["suggested_check"]
+    web = diagnose.diagnose(features, role="Web Server")["suggested_check"]
+    unknown = diagnose.diagnose(features, role="Cache Server")["suggested_check"]
+    assert "slow queries" in db and db != web
+    assert unknown == diagnose.CAUSES["RESPONSE_DEGRADATION"]["checks"]["default"]
+
+
+def test_diagnose_tolerates_missing_and_nan_features():
+    out = diagnose.diagnose({"cpu_usage_role_z": float("nan")})
+    assert out["cause_type"] == "UNCLASSIFIED"

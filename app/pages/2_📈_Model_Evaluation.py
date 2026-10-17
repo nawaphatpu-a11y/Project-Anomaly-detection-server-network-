@@ -53,6 +53,7 @@ eval_df = read("evaluation_report.csv")
 indep_before = read("evaluation_report_independent.csv")
 indep_after = read("evaluation_report_independent_after.csv")
 type_recall = read("recall_by_anomaly_type.csv")
+cause_report = read("cause_diagnosis_report.csv")
 
 if eval_df is None:
     st.warning("data/processed/evaluation_report.csv not found. Run python evaluate.py first")
@@ -99,6 +100,24 @@ with tab_types:
         if weakest == "RESPONSE_DEGRADATION":
             text += ", because the values rise gradually and the early part of each episode stays close to the normal range"
         st.write(text)
+
+    st.subheader("Probable-cause diagnosis")
+    if cause_report is None:
+        st.info("cause_diagnosis_report.csv not found. Run python evaluate.py again")
+    else:
+        real_types = ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION"]
+        real = cause_report.loc[real_types]
+        overall = (real[real_types].values.diagonal().sum() / real["n"].sum()) if real["n"].sum() else 0
+        c1, c2 = st.columns(2)
+        c1.metric("Cause matches the true type", f"{overall:.1%}")
+        c2.metric("False alarms left unclassified", f"{cause_report.loc['FALSE_ALARM', 'correct_rate']:.1%}")
+        counts = cause_report.drop(columns=["n", "correct_rate"]).astype(int)
+        fig = px.imshow(counts.values, text_auto=True, color_continuous_scale="Blues", aspect="auto",
+                        x=[f"Diagnosed: {c}" for c in counts.columns], y=[f"Actual: {i}" for i in counts.index])
+        fig.update_layout(coloraxis_showscale=False, margin=dict(t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Computed on rows flagged by the Isolation Forest. The rules were written around the simulated "
+                   "anomaly patterns, so real systems will be less clear-cut.")
 
 with tab_indep:
     if indep_before is None:

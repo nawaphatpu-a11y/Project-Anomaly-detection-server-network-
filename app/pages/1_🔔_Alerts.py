@@ -63,8 +63,26 @@ with col_dl:
     )
 
 st.dataframe(
-    filtered[["timestamp", "server_id", "alert_type", "severity_level", "cpu_usage", "memory_usage",
-              "network_in", "network_out", "response_time", "anomaly_score"]],
+    filtered[["timestamp", "server_id", "alert_type", "severity_level", "probable_cause", "top_signals",
+              "cpu_usage", "memory_usage", "network_in", "network_out", "response_time", "anomaly_score"]],
     use_container_width=True,
     hide_index=True,
 )
+
+st.subheader("Alert details")
+candidates = filtered.head(50).reset_index(drop=True)
+if candidates.empty:
+    st.info("No alerts match the current filters")
+    st.stop()
+choice = st.selectbox(
+    "Select an alert",
+    candidates.index,
+    format_func=lambda i: f"{candidates.loc[i, 'timestamp']} | {candidates.loc[i, 'server_id']} | {candidates.loc[i, 'alert_type']}",
+)
+selected = candidates.loc[choice]
+d1, d2 = st.columns(2)
+d1.metric("Probable cause", selected["probable_cause"])
+d2.metric("Role", selected["role"])
+st.write(f"**Strongest signals (deviation from the role's normal, in MAD):** {selected['top_signals']}")
+st.info(f"Check first: {selected['suggested_check']}")
+st.caption("A hypothesis based on five metrics only. It does not replace inspecting the server.")

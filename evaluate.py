@@ -12,6 +12,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+
+from diagnose import diagnose_frame
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
 MODEL_COLS = {
@@ -85,6 +87,26 @@ def main():
     type_recall_path = os.path.join(out_dir or ".", "recall_by_anomaly_type.csv")
     type_recall.to_csv(type_recall_path)
     print(f"Saved -> {type_recall_path}")
+
+    if {"cpu_usage_role_z", "response_time_dev_from_roll"}.issubset(df.columns):
+        causes = ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION", "UNCLASSIFIED"]
+        flagged = diagnose_frame(df[df["pred_isoforest"] == 1])
+        rows = {}
+        for group, subset, target in [
+            *[(t, flagged[(flagged["is_anomaly"] == 1) & (flagged["anomaly_type"] == t)], t) for t in causes[:3]],
+            ("FALSE_ALARM", flagged[flagged["is_anomaly"] == 0], "UNCLASSIFIED"),
+        ]:
+            counts = subset["cause_type"].value_counts().reindex(causes, fill_value=0)
+            rows[group] = {"n": len(subset), **counts.to_dict(),
+                           "correct_rate": round(counts[target] / len(subset), 3) if len(subset) else float("nan")}
+        cause_report = pd.DataFrame(rows).T
+        cause_report[["n", *causes]] = cause_report[["n", *causes]].astype(int)
+        cause_report.index.name = "true_type"
+        cause_path = os.path.join(out_dir or ".", "cause_diagnosis_report.csv")
+        cause_report.to_csv(cause_path)
+        print("\nCause diagnosis on rows flagged by Isolation Forest")
+        print(cause_report.to_string())
+        print(f"Saved -> {cause_path}")
 
     plot_path = os.path.join(out_dir or ".", "evaluation_scatter.png")
     plot_true_vs_predicted(df, plot_path)

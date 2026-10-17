@@ -38,6 +38,15 @@ role ตัวเองกี่ MAD) ที่ fit จาก train เท่า
 และจำลองข้อมูล live ตาม baseline ของแต่ละ role (ผลทดสอบเฉลี่ย 3 seed: F1 ของ Isolation Forest ~0.88 -> ~0.91;
 ส่วน one-hot ของ role เฉยๆ ไม่ช่วย). ชุดข้อมูลอิสระ precision ยังต่ำ (~0.05) -- feature นี้แก้ covariate shift ไม่ได้
 
+### Probable-cause diagnosis
+
+`diagnose.py` turns each flagged reading into a hypothesis: a probable cause (runaway process / traffic surge / gradual slowdown),
+the strongest signals (deviation from the server role's normal, in MAD) and a role-specific first thing to check. It is rule-based on
+the `*_role_z` features, so every conclusion can be traced back to numbers. The dashboard shows it in the Alerts page and the
+latest-anomalies table, and `evaluate.py` writes `cause_diagnosis_report.csv`: on rows flagged by the Isolation Forest the diagnosed
+cause matches the injected type 100% for CPU_SPIKE and NETWORK_SURGE and about 93% for RESPONSE_DEGRADATION, and about 65% of false
+alarms are left unclassified. The rules were written around the simulated patterns, so these figures are optimistic for real systems.
+
 ## 3) ประเมินผลกับชุดข้อมูลอิสระ (Step 5 เสริม — สร้างจาก AI คนละตัว)
 
 ```bash

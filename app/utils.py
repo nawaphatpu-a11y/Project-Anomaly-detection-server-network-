@@ -16,6 +16,7 @@ import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+from diagnose import diagnose
 from etl import SEVERITY_MAP, ROLE_METRICS
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
@@ -223,8 +224,20 @@ def tick(n_new: int = 5):
 
         reading["is_anomaly"] = int(pred == -1)
         reading["anomaly_score"] = round(float(score), 4)
-        reading["alert_type"] = reading["_injected_type"] or ("Other" if reading["is_anomaly"] else None)
-        reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None") if reading["is_anomaly"] else "None"
+        if reading["is_anomaly"]:
+            features = {**X.iloc[0].to_dict(), **_role_z_features(reading, role_baselines)}
+            diagnosis = diagnose(features, role=role)
+            reading["alert_type"] = "Other" if diagnosis["cause_type"] == "UNCLASSIFIED" else diagnosis["cause_type"]
+            reading["probable_cause"] = diagnosis["probable_cause"]
+            reading["top_signals"] = diagnosis["top_signals"]
+            reading["suggested_check"] = diagnosis["suggested_check"]
+            reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None")
+        else:
+            reading["alert_type"] = None
+            reading["probable_cause"] = None
+            reading["top_signals"] = None
+            reading["suggested_check"] = None
+            reading["severity_level"] = "None"
         reading.pop("_injected_type", None)
 
         hist.append(reading["response_time"])

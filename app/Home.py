@@ -93,7 +93,7 @@ with col_d:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No anomalies with an identifiable type in this session yet")
-    st.caption(f"Excludes \"Other\" (flagged by the model without matching a simulated type): {other_count}")
+    st.caption(f"Excludes \"Other\" (flagged without a clear dominant signal): {other_count}")
 
 col_e, col_f = st.columns(2)
 with col_e:
@@ -132,8 +132,8 @@ st.subheader("Latest 10 Anomalies")
 recent_alerts = df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10)
 if not recent_alerts.empty:
     st.dataframe(
-        recent_alerts[["timestamp", "server_id", "role", "alert_type", "cpu_usage", "memory_usage",
-                        "response_time", "anomaly_score"]],
+        recent_alerts[["timestamp", "server_id", "role", "alert_type", "probable_cause", "top_signals",
+                        "suggested_check", "anomaly_score"]],
         use_container_width=True, hide_index=True,
     )
 else:
