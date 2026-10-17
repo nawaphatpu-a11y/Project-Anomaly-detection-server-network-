@@ -10,7 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
 from server_view import STATUS_ICON, normal_band, overview, status_counts
-from utils import HISTORY_PER_SERVER, init_buffer, load_model_bundle, localize_alerts, tick
+from utils import HISTORY_PER_SERVER, init_buffer, live_settings, load_model_bundle, localize_alerts, tick
 
 METRICS = ["cpu_usage", "memory_usage", "network_in", "network_out", "response_time"]
 BAND_METRICS = {"cpu_usage", "memory_usage", "network_in", "network_out", "response_time"}
@@ -19,8 +19,11 @@ st.set_page_config(page_title="Servers", page_icon="🖥️", layout="wide")
 init_buffer()
 language_selector()
 
-st_autorefresh(interval=4000, key="servers_autorefresh")
-tick(n_new=3)
+st.sidebar.header(t("sidebar.settings"))
+refresh_seconds, rows_per_tick = live_settings()
+
+st_autorefresh(interval=refresh_seconds * 1000, key="servers_autorefresh")
+tick(n_new=rows_per_tick)
 
 st.title(t("servers.title"))
 st.caption(t("servers.caption"))

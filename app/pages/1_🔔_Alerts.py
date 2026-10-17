@@ -9,14 +9,17 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
-from utils import init_buffer, localize_alerts, tick
+from utils import init_buffer, live_settings, localize_alerts, tick
 
 st.set_page_config(page_title="Alerts", page_icon="🔔", layout="wide")
 init_buffer()
 language_selector()
 
-st_autorefresh(interval=4000, key="alerts_autorefresh")
-tick(n_new=3)
+st.sidebar.header(t("sidebar.settings"))
+refresh_seconds, rows_per_tick = live_settings()
+
+st_autorefresh(interval=refresh_seconds * 1000, key="alerts_autorefresh")
+tick(n_new=rows_per_tick)
 
 st.title(t("alerts.title"))
 
