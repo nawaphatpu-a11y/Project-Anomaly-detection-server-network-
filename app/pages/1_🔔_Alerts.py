@@ -1,8 +1,4 @@
-"""
-app/pages/1_🔔_Alerts.py
-หน้าแจ้งเตือนแยกต่างหาก — Streamlit จะแสดงเป็นเมนูแยกใน sidebar โดยอัตโนมัติ
-(ตามที่วางแผนไว้ตอนแรก: "หน้าต่างแจ้งเตือนแยกต่างหาก" คือหน้านี้)
-"""
+"""Alerts page."""
 import sys
 from pathlib import Path
 
@@ -25,18 +21,18 @@ st.title("🔔 Alert Log")
 alerts = st.session_state.alerts
 
 if alerts.empty:
-    st.success("ยังไม่มีการแจ้งเตือน ระบบปกติดี ✅")
+    st.success("No alerts yet. Everything looks normal ✅")
     st.stop()
 
 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 with col1:
-    type_filter = st.multiselect("กรองตามประเภท", options=sorted(alerts["alert_type"].dropna().unique()))
+    type_filter = st.multiselect("Filter by type", options=sorted(alerts["alert_type"].dropna().unique()))
 with col2:
-    server_filter = st.multiselect("กรองตามเครื่อง", options=sorted(alerts["server_id"].unique()))
+    server_filter = st.multiselect("Filter by server", options=sorted(alerts["server_id"].unique()))
 with col3:
-    severity_filter = st.multiselect("กรองตามความรุนแรง", options=["High", "Medium", "Low"])
+    severity_filter = st.multiselect("Filter by severity", options=["High", "Medium", "Low"])
 with col4:
-    sort_mode = st.selectbox("เรียงลำดับ", ["ความรุนแรงมากสุดก่อน", "เวลาล่าสุดก่อน"])
+    sort_mode = st.selectbox("Sort by", ["Highest severity first", "Most recent first"])
 
 filtered = alerts.copy()
 if type_filter:
@@ -46,22 +42,20 @@ if server_filter:
 if severity_filter:
     filtered = filtered[filtered["severity_level"].isin(severity_filter)]
 
-# anomaly_score ยิ่งติดลบมาก ยิ่งผิดปกติมาก -- "รุนแรงมากสุดก่อน" จึงเรียงจากน้อยไปมาก (ascending)
-if sort_mode == "ความรุนแรงมากสุดก่อน":
+if sort_mode == "Highest severity first":
     filtered = filtered.sort_values("anomaly_score", ascending=True)
 else:
     filtered = filtered.sort_values("timestamp", ascending=False)
 
-st.caption(f"อัปเดตล่าสุด: {alerts['timestamp'].max()}")
+st.caption(f"Last updated: {alerts['timestamp'].max()}")
 
 col_m, col_dl = st.columns([3, 1])
 with col_m:
-    st.metric("จำนวนการแจ้งเตือนทั้งหมด (session)", len(alerts))
+    st.metric("Total alerts (session)", len(alerts))
 with col_dl:
-    # utf-8-sig กันปัญหาภาษาไทยเพี้ยนตอนเปิดด้วย Excel
     csv_bytes = filtered.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "⬇️ ดาวน์โหลด CSV",
+        "⬇️ Download CSV",
         data=csv_bytes,
         file_name=f"alerts_{pd.Timestamp.now():%Y%m%d_%H%M%S}.csv",
         mime="text/csv",

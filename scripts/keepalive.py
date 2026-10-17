@@ -1,18 +1,4 @@
-"""
-scripts/keepalive.py
-เปิดเว็บแอปด้วยเบราว์เซอร์จริง (ผ่าน Playwright) แล้วกดปุ่มปลุกถ้าเจอว่าแอป sleep อยู่
-
-ทำไมต้องใช้เบราว์เซอร์จริง ทำไม ping ธรรมดาใช้ไม่ได้:
-Streamlit Community Cloud ให้แอปพัก (sleep) เองถ้าไม่มี "traffic จริง" นานเกิน 12 ชม.
-แต่การยิง HTTP GET ธรรมดา (curl, requests, cron ping ทั่วไป) จะโดนแค่หน้า static shell
-เปล่าๆ ไม่ถึงตัว container ของแอปจริง จึง "ไม่" นับเป็น traffic ที่ reset ตัวจับเวลาได้
-ต้องเป็นเบราว์เซอร์จริงที่โหลดหน้าเว็บ รัน JS และต่อ WebSocket เท่านั้นถึงจะถือว่าเป็น
-การเข้าใช้งานจริง (นี่คือข้อจำกัดที่ยืนยันจาก GitHub issue ของทีม Streamlit เอง ไม่ใช่
-เราเข้าใจผิด)
-
-Usage:
-    STREAMLIT_APP_URL=https://xxx.streamlit.app python scripts/keepalive.py
-"""
+"""เปิดเว็บแอปด้วย Playwright แล้วกดปุ่มปลุกถ้าแอป sleep อยู่"""
 import asyncio
 import os
 import sys
@@ -36,13 +22,11 @@ async def visit_and_wake():
         try:
             await page.goto(APP_URL, wait_until="domcontentloaded", timeout=120_000)
         except Exception as e:
-            # แอปที่กำลังตื่นช้าๆ อาจทำให้ timeout ได้บ้าง -- ไม่ถือเป็น error ร้ายแรง
-            # (รอบถัดไปจะลองใหม่เองตาม schedule) แค่ log ไว้แล้วจบแบบไม่ fail job
             print(f"[keepalive] โหลดหน้าไม่ทันเวลา (ไม่ร้ายแรง จะลองใหม่รอบหน้า): {e}")
             await browser.close()
             return
 
-        await page.wait_for_timeout(5_000)  # ให้เวลา Streamlit เช็คสถานะแอปก่อน
+        await page.wait_for_timeout(5_000)
 
         wake_button = page.get_by_role("button", name=WAKE_BUTTON_TEXT)
         try:
@@ -53,7 +37,7 @@ async def visit_and_wake():
         if is_sleeping:
             print("[keepalive] แอปกำลังหลับอยู่ -- กดปุ่มปลุก...")
             await wake_button.click()
-            await page.wait_for_timeout(15_000)  # รอให้เริ่ม boot
+            await page.wait_for_timeout(15_000)
             print("[keepalive] กดปลุกแล้ว แอปกำลังตื่น (รอบหน้าจะเช็คซ้ำว่าตื่นเต็มที่รึยัง)")
         else:
             print("[keepalive] แอปตื่นอยู่แล้ว ไม่ต้องทำอะไรเพิ่ม")

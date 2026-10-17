@@ -1,12 +1,6 @@
 """
-app/Home.py
-หน้า Dashboard หลัก — รัน: streamlit run app/Home.py (รันจาก root ของโปรเจกต์
-เพื่อให้ path models/ และ data/processed/ ถูกต้อง)
-
-ก่อนรันหน้านี้ครั้งแรก ต้องมีไฟล์โมเดลก่อน:
-    python generate_data.py
-    python etl.py
-    python train_model.py
+Main dashboard page.
+Run from the project root: streamlit run app/Home.py
 """
 import sys
 from pathlib import Path
@@ -23,13 +17,11 @@ from utils import init_buffer, tick
 st.set_page_config(page_title="Server & Network Health", page_icon="📊", layout="wide")
 init_buffer()
 
-st.sidebar.header("การตั้งค่า")
-refresh_seconds = st.sidebar.slider("⏱️ อัปเดตข้อมูลทุก", 2, 15, 4, format="%d วินาที")
-rows_per_tick = st.sidebar.slider("📊 จำนวน reading ใหม่ต่อรอบ", 1, 20, 5, format="%d แถว")
-# ใส่หน่วย (วินาที/แถว) ต่อท้ายตัวเลขบนแท่งเลื่อนเลย + สรุปเป็นประโยคอ่านง่ายด้านล่าง
-# เพราะทดสอบใช้งานจริงแล้วพบว่าตัวเลขเปล่าๆ บนแท่งเลื่อน 2 อันแยกแยะยากด้วยตาเปล่า
-st.sidebar.caption(f"ระบบจะสุ่มข้อมูลใหม่ {rows_per_tick} แถว ทุกๆ {refresh_seconds} วินาที")
-if st.sidebar.button("ล้างข้อมูลทั้งหมด"):
+st.sidebar.header("Settings")
+refresh_seconds = st.sidebar.slider("⏱️ Refresh every", 2, 15, 4, format="%d s")
+rows_per_tick = st.sidebar.slider("📊 New readings per round", 1, 20, 5, format="%d rows")
+st.sidebar.caption(f"Generates {rows_per_tick} new rows every {refresh_seconds} seconds")
+if st.sidebar.button("Clear all data"):
     st.session_state.readings = pd.DataFrame()
     st.session_state.alerts = pd.DataFrame()
     st.session_state.resp_history = {}
@@ -40,10 +32,10 @@ new_readings = tick(n_new=rows_per_tick)
 df = st.session_state.readings
 
 st.title("📊 Server & Network Health Dashboard")
-st.caption("ข้อมูล live เป็นข้อมูลจำลอง สคอร์ด้วย Isolation Forest ที่เทรนจริงจาก train_model.py")
+st.caption("Live data is simulated and scored by the Isolation Forest trained in train_model.py")
 
 if df.empty:
-    st.info("กำลังรอข้อมูล live รอบแรก...")
+    st.info("Waiting for the first round of live data...")
     st.stop()
 
 total_readings = len(df)
@@ -54,29 +46,31 @@ servers_online = df["server_id"].nunique()
 c1, c2, c3 = st.columns(3)
 c1.metric("System Health Score", f"{health_score:.1f}%")
 c2.metric("Total Anomalies (session)", f"{total_anomalies}")
-c3.metric("เครื่องที่ Online", f"{servers_online}")
+c3.metric("Servers Online", f"{servers_online}")
 
 st.divider()
 
 col_a, col_b = st.columns(2)
 with col_a:
-    st.subheader("แนวโน้ม CPU / Memory เฉลี่ย")
+    st.subheader("Average CPU / Memory Trend")
     trend = df.groupby(df.index // max(1, rows_per_tick)).agg(
-        cpu_usage=("cpu_usage", "mean"),
-        memory_usage=("memory_usage", "mean"),
+        CPU=("cpu_usage", "mean"),
+        Memory=("memory_usage", "mean"),
     ).reset_index()
-    fig = px.line(trend, y=["cpu_usage", "memory_usage"], labels={"value": "%", "index": "รอบข้อมูล (เก่า→ใหม่)"})
+    fig = px.line(trend, x="index", y=["CPU", "Memory"],
+                  labels={"value": "Percent", "index": "Data Round (Oldest → Newest)", "variable": "Metric"})
     st.plotly_chart(fig, use_container_width=True)
 
 with col_b:
-    st.subheader("แนวโน้มจำนวน Anomaly")
+    st.subheader("Anomaly Count Trend")
     anomaly_trend = df.groupby(df.index // max(1, rows_per_tick))["is_anomaly"].sum().reset_index()
-    fig = px.line(anomaly_trend, x="index", y="is_anomaly", labels={"index": "รอบข้อมูล (เก่า→ใหม่)", "is_anomaly": "จำนวน anomaly"})
+    fig = px.line(anomaly_trend, x="index", y="is_anomaly",
+                  labels={"index": "Data Round (Oldest → Newest)", "is_anomaly": "Anomaly Count"})
     st.plotly_chart(fig, use_container_width=True)
 
 col_c, col_d = st.columns(2)
 with col_c:
-    st.subheader("Anomaly แยกตามเครื่อง")
+    st.subheader("Anomalies by Server")
     by_server = df[df["is_anomaly"] == 1]["server_id"].value_counts().reset_index()
     by_server.columns = ["server_id", "count"]
     if not by_server.empty:
@@ -84,14 +78,11 @@ with col_c:
         fig.update_traces(textposition="outside")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("ยังไม่มี anomaly เกิดขึ้นในเซสชันนี้")
+        st.info("No anomalies in this session yet")
 
 with col_d:
-    st.subheader("Anomaly แยกตามประเภท")
+    st.subheader("Anomalies by Type")
     anomalies = df[df["is_anomaly"] == 1]
-    # FIX: เดิม "Other" (โมเดลเจอเองโดยไม่ตรงชนิดที่จำลองไว้) มีจำนวนเยอะกว่า 3 ชนิดที่เหลือ
-    # รวมกันมาก ทำให้แท่งอื่นถูกบีบจนอ่านค่าไม่ออกเลย -- แยก Other ออกมาเป็นตัวเลขต่างหาก
-    # เหลือแค่กราฟเทียบ 3 ชนิดที่ระบุสาเหตุได้จริง ให้เห็นความต่างระหว่างกันชัดขึ้น
     known = anomalies[anomalies["alert_type"] != "Other"]
     other_count = int((anomalies["alert_type"] == "Other").sum())
     by_type = known["alert_type"].value_counts().reset_index()
@@ -101,42 +92,49 @@ with col_d:
         fig.update_traces(textposition="outside")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("ยังไม่มี anomaly ที่ระบุชนิดได้ในเซสชันนี้")
-    st.caption(f"ไม่รวม \"Other\" (โมเดลตัดสินเองว่าผิดปกติ ไม่ตรงชนิดที่จำลองไว้ตรงๆ): {other_count} ครั้ง")
+        st.info("No anomalies with an identifiable type in this session yet")
+    st.caption(f"Excludes \"Other\" (flagged by the model without matching a simulated type): {other_count}")
 
 col_e, col_f = st.columns(2)
 with col_e:
-    st.subheader("CPU vs Response Time (ไฮไลต์ anomaly)")
+    st.subheader("CPU vs Response Time (anomalies highlighted)")
     fig = px.scatter(df, x="cpu_usage", y="response_time",
                       color=df["is_anomaly"].map({0: "Normal", 1: "Anomaly"}),
                       color_discrete_map={"Normal": "#4C78A8", "Anomaly": "#E45756"})
     st.plotly_chart(fig, use_container_width=True)
 
 with col_f:
-    st.subheader("การกระจายตัวของ Network Traffic")
-    # FIX: เดิมใช้ histogram ซึ่งพังเวลาข้อมูลมี long tail (anomaly ที่ network พุ่งแรงมาก
-    # ดึงแกน x ยืดไปไกล จนก้อนข้อมูลปกติถูกบีบเป็นเส้นบางๆ) เปลี่ยนเป็น box plot แทน
-    # เพราะออกแบบมาสำหรับข้อมูลที่มี outlier โดยเฉพาะ -- กล่องกลางคือช่วงปกติ (IQR)
-    # จุดที่หลุดออกมาคือ anomaly ที่เห็นได้ชัดโดยไม่ต้องพึ่งการปรับสเกลแกนเอง
+    st.subheader("Network Traffic Distribution")
     fig = px.box(df, y="network_in", points="outliers")
     st.plotly_chart(fig, use_container_width=True)
 
 if "role" in df.columns:
     col_g, col_h = st.columns(2)
     with col_g:
-        st.subheader("การกระจายตัว CPU แยกตาม Role")
+        st.subheader("CPU Distribution by Role")
         st.plotly_chart(px.box(df, x="role", y="cpu_usage", color="role"), use_container_width=True)
     with col_h:
-        st.subheader("การกระจายตัว Memory แยกตาม Role")
+        st.subheader("Memory Distribution by Role")
         st.plotly_chart(px.box(df, x="role", y="memory_usage", color="role"), use_container_width=True)
 
-st.subheader("Top 10 เหตุการณ์ผิดปกติล่าสุด")
+    role_summary = (
+        df.groupby("role")
+        .agg(readings=("is_anomaly", "size"), alerts=("is_anomaly", "sum"),
+             median_cpu=("cpu_usage", "median"), median_memory=("memory_usage", "median"),
+             median_response=("response_time", "median"))
+        .round(1)
+    )
+    role_summary["alert_rate_%"] = (role_summary["alerts"] / role_summary["readings"] * 100).round(1)
+    st.subheader("Summary by Role")
+    st.dataframe(role_summary, use_container_width=True)
+
+st.subheader("Latest 10 Anomalies")
 recent_alerts = df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10)
 if not recent_alerts.empty:
     st.dataframe(
-        recent_alerts[["timestamp", "server_id", "alert_type", "cpu_usage", "memory_usage",
+        recent_alerts[["timestamp", "server_id", "role", "alert_type", "cpu_usage", "memory_usage",
                         "response_time", "anomaly_score"]],
         use_container_width=True, hide_index=True,
     )
 else:
-    st.success("ยังไม่มีเหตุการณ์ผิดปกติในเซสชันนี้ ✅")
+    st.success("No anomalies in this session yet ✅")

@@ -2,10 +2,6 @@ import numpy as np
 import pandas as pd
 
 
-# ============================================================
-# Configuration
-# ============================================================
-
 SEED = 202
 N_ROWS = 7000
 N_SERVERS = 12
@@ -14,10 +10,6 @@ OUTPUT_FILE = "independent_test_set_v2.csv"
 
 rng = np.random.default_rng(SEED)
 
-
-# ============================================================
-# Server definitions
-# ============================================================
 
 roles = [
     "Web Server",
@@ -40,21 +32,12 @@ for i in range(1, N_SERVERS + 1):
     })
 
 
-# ============================================================
-# Time range
-# 5-minute interval
-# ============================================================
-
 timestamps = pd.date_range(
     start="2026-01-01 00:00:00",
     periods=N_ROWS,
     freq="5min"
 )
 
-
-# ============================================================
-# Helper functions
-# ============================================================
 
 def clip_non_negative(x):
     return np.maximum(x, 0.0)
@@ -93,13 +76,10 @@ def work_hour_factor(hours):
         if hour < 6:
             factor[i] = 0.25
         elif hour < 9:
-            # Ramp-up
             factor[i] = 0.25 + (hour - 6) / 3 * 0.65
         elif hour < 18:
-            # Working hours
             factor[i] = 0.90
         elif hour < 21:
-            # Ramp-down
             factor[i] = 0.90 - (hour - 18) / 3 * 0.55
         else:
             factor[i] = 0.35
@@ -107,13 +87,6 @@ def work_hour_factor(hours):
     return factor
 
 
-# ============================================================
-# Generate normal server metrics
-# ============================================================
-
-# Assign each timestamp to a server.
-# This creates repeated observations per server while preserving
-# the global 5-minute time progression.
 server_indices = np.arange(N_ROWS) % N_SERVERS
 
 server_id_array = np.array(
@@ -128,13 +101,7 @@ role_array = np.array(
     [servers[i]["role"] for i in server_indices], dtype=object
 )
 
-# Repeat timestamps across servers.
-# Each server gets observations every 5 minutes.
-# FIX: N_ROWS // N_SERVERS truncates when not evenly divisible (e.g. 7000 // 12 = 583,
-# giving only 583*12=6996 timestamps for 7000 rows) -- use ceiling division instead so
-# there are always enough timestamp buckets, then index directly per row so the length
-# always matches N_ROWS exactly (no more np.tile + slice mismatch).
-periods_needed = -(-N_ROWS // N_SERVERS)  # ceil division
+periods_needed = -(-N_ROWS // N_SERVERS)
 base_time = pd.date_range(
     start="2026-01-01 00:00:00",
     periods=periods_needed,
@@ -145,7 +112,6 @@ row_time_idx = np.arange(N_ROWS) // N_SERVERS
 timestamp_array = base_time.to_numpy()[row_time_idx]
 
 
-# Time-related features
 hours = pd.DatetimeIndex(timestamp_array).hour
 minutes = pd.DatetimeIndex(timestamp_array).minute
 days = pd.DatetimeIndex(timestamp_array).dayofweek
@@ -154,10 +120,6 @@ hour_decimal = hours + minutes / 60.0
 
 work_factor = work_hour_factor(hour_decimal)
 
-
-# ============================================================
-# Role-specific behavior
-# ============================================================
 
 cpu_base = np.zeros(N_ROWS)
 memory_base = np.zeros(N_ROWS)
@@ -184,10 +146,6 @@ for i, role in enumerate(role_array):
         network_base[i] = 55 + 140 * work_factor[i]
         response_base[i] = 45 + 23 * work_factor[i]
 
-
-# ============================================================
-# Add server-specific characteristics
-# ============================================================
 
 server_cpu_offset = {
     f"SRV-{i:03d}": rng.uniform(-5, 5)
@@ -217,10 +175,6 @@ for i, sid in enumerate(server_id_array):
     response_base[i] += server_response_offset[sid]
 
 
-# ============================================================
-# Add natural correlated noise
-# ============================================================
-
 cpu_noise = add_autocorrelated_noise(
     N_ROWS,
     scale=1.8,
@@ -246,7 +200,6 @@ response_noise = add_autocorrelated_noise(
 )
 
 
-# Additional periodic behavior
 daily_cycle = np.sin(
     2 * np.pi * hour_decimal / 24
 )
@@ -257,10 +210,6 @@ weekly_factor = np.where(
     1.0
 )
 
-
-# ============================================================
-# Final normal metrics
-# ============================================================
 
 cpu_usage = (
     cpu_base
@@ -280,7 +229,6 @@ network_in = (
     + network_noise
 )
 
-# Network OUT is related to IN, but not identical.
 network_out = (
     network_in * rng.uniform(0.35, 0.75, N_ROWS)
     + rng.normal(0, 6, N_ROWS)
@@ -293,7 +241,6 @@ response_time = (
 )
 
 
-# Ensure normal data stays within physically sensible ranges.
 cpu_usage = np.clip(cpu_usage, 0, 89)
 memory_usage = np.clip(memory_usage, 0, 95)
 
@@ -302,10 +249,6 @@ network_out = clip_non_negative(network_out)
 
 response_time = clip_non_negative(response_time)
 
-
-# ============================================================
-# Create initial dataframe
-# ============================================================
 
 df = pd.DataFrame({
     "server_id": server_id_array,
@@ -326,18 +269,12 @@ df = pd.DataFrame({
 })
 
 
-# ============================================================
-# Insert TRUE ANOMALY EPISODES
-# ============================================================
-
 anomaly_types = [
     "CPU_SPIKE",
     "NETWORK_SURGE",
     "RESPONSE_DEGRADATION"
 ]
 
-# Target approximately 2-5% anomalous rows.
-# We use multiple contiguous episodes.
 target_anomaly_rows = int(
     N_ROWS * rng.uniform(0.02, 0.05)
 )
@@ -356,12 +293,10 @@ def ranges_overlap(start, end, ranges):
 
 while current_anomaly_rows < target_anomaly_rows:
 
-    # Episode length between 5 and 20 rows
     episode_length = int(
         rng.integers(5, 21)
     )
 
-    # Don't overshoot too much
     if current_anomaly_rows + episode_length > target_anomaly_rows:
         episode_length = target_anomaly_rows - current_anomaly_rows
 
@@ -377,7 +312,6 @@ while current_anomaly_rows < target_anomaly_rows:
 
     end = start + episode_length - 1
 
-    # Keep anomaly episodes separated.
     if ranges_overlap(start, end, used_ranges):
         continue
 
@@ -396,12 +330,8 @@ while current_anomaly_rows < target_anomaly_rows:
         episode_length
     )
 
-    # --------------------------------------------------------
-    # CPU SPIKE
-    # --------------------------------------------------------
     if anomaly_type == "CPU_SPIKE":
 
-        # Gradual onset followed by a very high plateau.
         spike_strength = (
             20
             + 12 * progress
@@ -417,7 +347,6 @@ while current_anomaly_rows < target_anomaly_rows:
             100
         )
 
-        # Secondary effects
         df.loc[
             positions,
             "response_time"
@@ -427,9 +356,6 @@ while current_anomaly_rows < target_anomaly_rows:
             episode_length
         )
 
-    # --------------------------------------------------------
-    # NETWORK SURGE
-    # --------------------------------------------------------
     elif anomaly_type == "NETWORK_SURGE":
 
         surge_factor_in = rng.uniform(
@@ -442,7 +368,6 @@ while current_anomaly_rows < target_anomaly_rows:
             5.0
         )
 
-        # Make the anomaly evolve during the episode.
         ramp = (
             1.0
             + 0.25 * progress
@@ -458,7 +383,6 @@ while current_anomaly_rows < target_anomaly_rows:
             "network_out"
         ] *= surge_factor_out * ramp
 
-        # Network congestion can affect response time.
         df.loc[
             positions,
             "response_time"
@@ -468,14 +392,8 @@ while current_anomaly_rows < target_anomaly_rows:
             episode_length
         )
 
-    # --------------------------------------------------------
-    # RESPONSE DEGRADATION
-    # --------------------------------------------------------
     elif anomaly_type == "RESPONSE_DEGRADATION":
 
-        # Important:
-        # This deliberately increases gradually rather than
-        # creating an instantaneous spike.
         degradation = (
             np.linspace(
                 15,
@@ -494,7 +412,6 @@ while current_anomaly_rows < target_anomaly_rows:
             "response_time"
         ] += degradation
 
-        # Small secondary CPU increase
         df.loc[
             positions,
             "cpu_usage"
@@ -504,7 +421,6 @@ while current_anomaly_rows < target_anomaly_rows:
             episode_length
         )
 
-    # Mark anomaly
     df.loc[
         positions,
         "is_anomaly"
@@ -518,11 +434,6 @@ while current_anomaly_rows < target_anomaly_rows:
     current_anomaly_rows += episode_length
 
 
-# ============================================================
-# Final safety checks
-# ============================================================
-
-# Numeric ranges
 df["cpu_usage"] = np.clip(
     df["cpu_usage"],
     0,
@@ -551,16 +462,10 @@ df["response_time"] = np.maximum(
 )
 
 
-# Ensure exact integer type for anomaly label.
 df["is_anomaly"] = df["is_anomaly"].astype(int)
 
-# Ensure exact categorical strings.
 df["anomaly_type"] = df["anomaly_type"].astype(str)
 
-
-# ============================================================
-# Verify schema
-# ============================================================
 
 expected_columns = [
     "server_id",
@@ -578,10 +483,6 @@ expected_columns = [
 
 assert list(df.columns) == expected_columns
 
-# FIX: pandas 3.x introduces its own "str" dtype for string columns (distinct from
-# legacy numpy "object") -- even an object-dtype numpy array becomes this new dtype
-# once put in a DataFrame here. `dtype == object` alone now fails on pandas 3.x even
-# though the column genuinely holds strings. Accept either dtype instead.
 assert pd.api.types.is_object_dtype(df["server_id"]) or pd.api.types.is_string_dtype(df["server_id"])
 assert pd.api.types.is_object_dtype(df["hostname"]) or pd.api.types.is_string_dtype(df["hostname"])
 assert pd.api.types.is_object_dtype(df["role"]) or pd.api.types.is_string_dtype(df["role"])
@@ -633,19 +534,11 @@ assert (df["network_out"] >= 0).all()
 assert (df["response_time"] >= 0).all()
 
 
-# ============================================================
-# Export
-# ============================================================
-
 df.to_csv(
     OUTPUT_FILE,
     index=False
 )
 
-
-# ============================================================
-# Summary
-# ============================================================
 
 print("=" * 60)
 print("Independent Test Set Generated")

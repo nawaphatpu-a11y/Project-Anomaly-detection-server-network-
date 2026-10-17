@@ -29,6 +29,15 @@ python evaluate.py               # -> data/processed/evaluation_report.csv + eva
 (ลดเวลารอ) ส่วนข้อมูลดิบ/ไฟล์ขั้นกลางขนาดใหญ่ถูก `.gitignore` ไว้ สร้างใหม่ได้ด้วยคำสั่งข้างบน
 **ถ้าแก้โมเดล/ข้อมูลแล้ว ต้อง commit ไฟล์พวกนี้ใหม่ด้วย** ไม่งั้นเว็บยังใช้ของเก่าอยู่
 
+### Role baseline (แต่ละ role มีนิสัยต่างกัน)
+
+`generate_data.py` ให้แต่ละ role มีค่าปกติต่างกันตามธรรมชาติ (Web = network หนัก/CPU-memory เบา,
+Database = memory สูง/response ช้ากว่า, App = CPU สูงสุด) แทนที่จะสุ่มจากช่วงเดียวกัน ทำให้กราฟ
+box plot แยก role ใน dashboard เห็นความต่างจริง และ `etl.py` เพิ่ม feature `*_role_z` (ห่างจากค่ากลางของ
+role ตัวเองกี่ MAD) ที่ fit จาก train เท่านั้น เก็บไว้ในไฟล์โมเดล (`role_baselines`) ให้ dashboard คำนวณตรงกับตอนเทรน
+และจำลองข้อมูล live ตาม baseline ของแต่ละ role (ผลทดสอบเฉลี่ย 3 seed: F1 ของ Isolation Forest ~0.88 -> ~0.91;
+ส่วน one-hot ของ role เฉยๆ ไม่ช่วย). ชุดข้อมูลอิสระ precision ยังต่ำ (~0.05) -- feature นี้แก้ covariate shift ไม่ได้
+
 ## 3) ประเมินผลกับชุดข้อมูลอิสระ (Step 5 เสริม — สร้างจาก AI คนละตัว)
 
 ```bash
@@ -37,8 +46,8 @@ python evaluate_independent.py --infile independent_test_set_v2.csv
 python retrain_with_independent.py --independent-infile independent_test_set_v2.csv   # ทดลอง retrain
 ```
 
-ข้อสังเกตสำคัญที่เจอจริง: precision ร่วงจาก ~0.86 เหลือ ~0.10 บนชุดข้อมูลอิสระ ทั้งที่
-recall ยังสูง (~0.95) เพราะ baseline ของข้อมูล "ปกติ" ต่างจากที่โมเดลเคยเห็น (covariate
+ข้อสังเกตสำคัญที่เจอจริง: precision ร่วงจาก ~0.88 เหลือ ~0.05 บนชุดข้อมูลอิสระ ทั้งที่
+recall ยังสูง (~0.94) เพราะ baseline ของข้อมูล "ปกติ" ต่างจากที่โมเดลเคยเห็น (covariate
 shift) และการ retrain ด้วยข้อมูลผสมแบบตรงไปตรงมาแทบไม่ช่วย (ข้อมูลใหม่เป็นแค่ ~3.9% ของ
 training set) — `retrain_with_independent.py` เซฟโมเดลใหม่แยกไว้ ไม่ทับโมเดล deploy
 

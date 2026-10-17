@@ -1,15 +1,4 @@
-"""
-app/utils.py
-ฟังก์ชันใช้ร่วมกันระหว่าง Home.py และ pages/1_Alerts.py
-
-แนวคิด: โหลดโมเดล Isolation Forest ที่เทรน+เซฟไว้แล้วจาก train_model.py มาสคอร์ข้อมูล
-"live" (จำลอง) แบบ real-time โดยคำนวณ feature ให้ตรงกับตอนเทรนเป๊ะ (normalize ด้วย
-min/max ชุดเดียวกับตอนเทรน จาก scale_params.json, คำนวณ trend feature จาก buffer
-ย้อนหลังของแต่ละ server ที่เก็บไว้ใน session_state)
-
-ใช้เฉพาะ Isolation Forest เพราะเป็นโมเดลหลักของ prototype ตามแผน (LOF/Z-score ใน
-train_model.py มีไว้ทำ benchmark เทียบผลแบบออฟไลน์เท่านั้น ไม่ได้ตั้งใจเอาไป deploy)
-"""
+"""Shared helpers for the dashboard: model loading, live reading simulation and feature building."""
 from __future__ import annotations
 
 import json
@@ -25,51 +14,38 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent  # app/utils.py -> root ของโปรเจกต์
-sys.path.insert(0, str(PROJECT_ROOT))  # ให้ import etl.py (อยู่ที่ root) ได้จากในนี้
-from etl import SEVERITY_MAP  # ใช้ mapping เดียวกับ pipeline offline ไม่ต้อง duplicate
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from etl import SEVERITY_MAP, ROLE_METRICS
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
-BUFFER_MAX_ROWS = 3000          # กันไม่ให้ session state โตไม่หยุดระหว่างเดโมยาวๆ
-ANOMALY_INJECT_PROB = 0.04      # โอกาสเฉลี่ยที่ live reading รอบนี้จะเป็น anomaly (จำลองเพื่อโชว์เดโม)
+BUFFER_MAX_ROWS = 3000
+ANOMALY_INJECT_PROB = 0.04
 
-# ให้แต่ละเครื่องมีนิสัยไม่เท่ากัน (บางเครื่อง "ป่วยง่าย" กว่าเครื่องอื่น) ไม่งั้นกราฟ
-# "Anomaly แยกตามเครื่อง" จะไม่มีความหมายอะไรเลย เพราะทุกเครื่องสุ่มด้วยโอกาสเท่ากันหมด
-# ตัวเลขที่เห็นต่างกันเป็นแค่ noise ล้วนๆ ไม่ได้สะท้อนว่าเครื่องไหนแย่จริง
 def _server_weight(server_id: str, server_ids: list) -> float:
     idx = server_ids.index(server_id) if server_id in server_ids else 0
-    # กระจายตัวคูณระหว่าง 0.4x ถึง 2.2x แบบ deterministic ตามลำดับเครื่อง
     return 0.4 + (idx % 6) * 0.36
 
 
 def _ensure_pipeline_has_run():
-    # สำคัญสำหรับตอน deploy จริง: Streamlit Community Cloud แค่ clone repo แล้วรัน
-    # `streamlit run app/Home.py` ทันที "ไม่" รัน generate_data.py/etl.py/train_model.py
-    # ให้เองก่อน ถ้าไม่มีไฟล์โมเดลอยู่ใน repo เว็บจะพังตั้งแต่เปิดครั้งแรก
-    # จึงให้ dashboard เช็คเองตอนโหลดครั้งแรก แล้วรัน pipeline offline ให้อัตโนมัติถ้ายังไม่มี
-    # (รันแค่ครั้งเดียวตอนยังไม่มีไฟล์ ครั้งต่อไปเร็วปกติเพราะมีไฟล์แล้ว)
     model_path = PROJECT_ROOT / MODEL_PATH
     scale_path = PROJECT_ROOT / SCALE_PARAMS_PATH
     if model_path.exists() and scale_path.exists():
         return
 
-    with st.spinner("ยังไม่มีโมเดล — กำลังรัน pipeline ครั้งแรก (generate_data → etl → train_model)..."):
+    with st.spinner("No model found. Running the pipeline for the first time (generate_data → etl → train_model)..."):
         for script in ["generate_data.py", "etl.py", "train_model.py"]:
             result = subprocess.run(
                 [sys.executable, str(PROJECT_ROOT / script)],
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True,
             )
             if result.returncode != 0:
-                st.error(f"รัน {script} ไม่สำเร็จ:\n{result.stderr[-2000:]}")
+                st.error(f"{script} failed:\n{result.stderr[-2000:]}")
                 st.stop()
 
 
 def ensure_evaluation_has_run():
-    # เหมือน _ensure_pipeline_has_run() แต่สำหรับไฟล์ผลประเมิน (evaluation_report*.csv)
-    # ที่หน้า Model Evaluation ต้องใช้ -- แยกออกมาต่างหาก ไม่รวมเข้า _ensure_pipeline_has_run()
-    # เพราะ evaluate.py ไม่จำเป็นต่อการสคอร์ live เลย (หน้า Home/Alerts ไม่ต้องรอมัน)
-    # เรียกจากหน้า Model Evaluation เท่านั้น ตอนเปิดหน้านั้นจริงๆ ค่อยรัน
-    _ensure_pipeline_has_run()  # ต้องมี predictions.csv ก่อน evaluate.py ถึงจะรันได้
+    _ensure_pipeline_has_run()
 
     eval_path = PROJECT_ROOT / "data/processed/evaluation_report.csv"
     indep_report = PROJECT_ROOT / "data/processed/evaluation_report_independent.csv"
@@ -86,7 +62,7 @@ def ensure_evaluation_has_run():
     if not todo:
         return
 
-    with st.spinner("กำลังรัน evaluate.py ครั้งแรก (สำหรับหน้า Model Evaluation)..."):
+    with st.spinner("Running evaluate.py for the first time (needed by the Model Evaluation page)..."):
         for item in todo:
             cmd = [sys.executable] + (item if isinstance(item, list) else [item])
             result = subprocess.run(
@@ -94,17 +70,17 @@ def ensure_evaluation_has_run():
                 cwd=str(PROJECT_ROOT), capture_output=True, text=True,
             )
             if result.returncode != 0:
-                st.warning(f"รัน {cmd[1]} ไม่สำเร็จ (หน้านี้จะโชว์ได้ไม่ครบ):\n{result.stderr[-1000:]}")
+                st.warning(f"{cmd[1]} failed (this page will be incomplete):\n{result.stderr[-1000:]}")
 
 
 @st.cache_resource
 def load_model_bundle():
-    """โหลด {model, feature_cols, trend_window, server_ids} ที่ train_model.py เซฟไว้"""
+    """Load the bundle saved by train_model.py: model, feature_cols, trend_window, server_ids."""
     _ensure_pipeline_has_run()
     try:
         return joblib.load(PROJECT_ROOT / MODEL_PATH), None
     except FileNotFoundError:
-        return None, f"ไม่พบไฟล์โมเดลที่ {MODEL_PATH} แม้รัน pipeline อัตโนมัติแล้ว ลองรันเองด้วยมือดูอีกครั้ง"
+        return None, f"Model file not found at {MODEL_PATH} even after running the pipeline automatically. Try running it manually"
 
 
 @st.cache_resource
@@ -114,26 +90,32 @@ def load_scale_params():
 
 
 def _minmax(value: float, col: str, scale_params: dict) -> float:
-    # ต้องเหมือนกับ train_model.py::apply_min_max เป๊ะ (รวม clip) ไม่งั้นจะเกิด
-    # training-serving skew: ตอนเทรน/ประเมินผล ค่า norm ถูก clip ไว้ที่ 0-1 เสมอ แต่ log
-    # ตอน live เดิมไม่ได้ clip ทำให้ reading ที่แรงกว่าที่โมเดลเคยเห็นตอนเทรน (เช่น network
-    # พุ่งแรงมากในโหมดจำลอง) กลายเป็นค่า norm ติดลบ/เกิน 1 ซึ่งโมเดลไม่เคยเห็นรูปแบบนี้มา
-    # ก่อน อาจทำให้ตัดสินใจผิดเพี้ยนไปจากที่ควรจะเป็น -- เจอจากการตรวจสอบ evaluate_independent.py
-    # ที่ scale ของข้อมูลอิสระต่างจากตอนเทรนเยอะ แล้วพบว่า precision ร่วงหนักเพราะเหตุผลเดียวกันนี้
     lo, hi = scale_params[col]["min"], scale_params[col]["max"]
     if hi <= lo:
         return 0.0
     return float(np.clip((value - lo) / (hi - lo), 0.0, 1.0))
 
 
-def _simulate_raw_reading(server_id: str, anomaly_prob: float) -> dict:
-    """สุ่มค่า metric หนึ่งแถว จำลองการอ่านค่าจริงจาก server ณ เวลาปัจจุบัน
-    (สุ่มช่วงใกล้เคียงกับข้อมูลที่ generate_data.py ใช้เทรนโมเดล)"""
-    cpu = np.random.normal(30, 6)
-    mem = np.random.normal(40, 8)
-    net_in = abs(np.random.normal(80, 25))
-    net_out = abs(np.random.normal(70, 20))
-    resp = abs(np.random.normal(90, 20))
+def _role_normal_params(role: str, baselines: dict | None) -> dict:
+    """Normal (loc, scale) per metric for a role, taken from the role_baselines learned at training time.
+    Falls back to fixed defaults when the model bundle has no baselines (older models)."""
+    default = {"cpu_usage": (30, 6), "memory_usage": (40, 8), "network_in": (80, 25),
+               "network_out": (70, 20), "response_time": (90, 20)}
+    if not baselines or role not in baselines:
+        return default
+    return {m: (baselines[role][m]["median"], max(baselines[role][m]["mad"] * 1.4826, 1e-6))
+            for m in ROLE_METRICS}
+
+
+def _simulate_raw_reading(server_id: str, anomaly_prob: float, role: str = "Unknown",
+                          baselines: dict | None = None) -> dict:
+    """Simulate one live reading for a server, centered on that server's role baseline."""
+    p = _role_normal_params(role, baselines)
+    cpu = np.random.normal(*p["cpu_usage"])
+    mem = np.random.normal(*p["memory_usage"])
+    net_in = abs(np.random.normal(*p["network_in"]))
+    net_out = abs(np.random.normal(*p["network_out"]))
+    resp = abs(np.random.normal(*p["response_time"]))
 
     injected_type = None
     if random.random() < anomaly_prob:
@@ -141,12 +123,12 @@ def _simulate_raw_reading(server_id: str, anomaly_prob: float) -> dict:
 
     if injected_type == "CPU_SPIKE":
         cpu = np.random.uniform(92, 100)
-        mem += np.random.uniform(10, 20)
+        mem = min(mem + np.random.uniform(10, 20), 99.0)
     elif injected_type == "NETWORK_SURGE":
         net_in *= np.random.uniform(5, 10)
         net_out *= np.random.uniform(5, 10)
     elif injected_type == "RESPONSE_DEGRADATION":
-        resp *= np.random.uniform(2.5, 4.5)  # ค่าเดี่ยวพุ่งแรงพอให้เห็นผลใน 1 tick ของเดโม
+        resp *= np.random.uniform(2.5, 4.5)
 
     return {
         "timestamp": datetime.now(),
@@ -160,9 +142,16 @@ def _simulate_raw_reading(server_id: str, anomaly_prob: float) -> dict:
     }
 
 
+def _role_z_features(reading: dict, baselines: dict | None) -> dict:
+    if not baselines:
+        return {}
+    b = baselines.get(reading.get("role"), baselines["__global__"])
+    return {f"{m}_role_z": (reading[m] - b[m]["median"]) / b[m]["mad"] for m in ROLE_METRICS}
+
+
 def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
-                        resp_history: deque) -> pd.DataFrame:
-    """คำนวณ feature ให้ตรงกับตอนเทรนเป๊ะ (etl.py) แล้วจัดเรียงคอลัมน์ตาม feature_cols"""
+                        resp_history: deque, baselines: dict | None = None) -> pd.DataFrame:
+    """Build features exactly as etl.py does at training time, ordered by feature_cols."""
     network_total = reading["network_in"] + reading["network_out"]
     cpu_memory_ratio = reading["cpu_usage"] / reading["memory_usage"] if reading["memory_usage"] else 0.0
 
@@ -170,12 +159,10 @@ def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
     day_of_week = reading["timestamp"].weekday()
     is_peak_hour = int(9 <= hour <= 17)
 
-    # trend feature: เทียบกับค่าเฉลี่ย response_time ย้อนหลังของ "เครื่องนี้" (ก่อนรอบนี้)
-    # -- ตรงกับ etl.py::add_trend_feature (shift(1).rolling(window).mean())
     if len(resp_history) >= 3:
         roll_mean = float(np.mean(resp_history))
     else:
-        roll_mean = reading["response_time"]  # ยังไม่มีประวัติพอ -> ให้ dev = 0 ไปก่อน
+        roll_mean = reading["response_time"]
     response_time_dev_from_roll = reading["response_time"] - roll_mean
 
     values = {
@@ -189,8 +176,9 @@ def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
         "hour": hour,
         "day_of_week": day_of_week,
         "is_peak_hour": is_peak_hour,
-        "response_time_dev_from_roll": response_time_dev_from_roll,  # ดิบ ไม่ normalize (ตรงกับ ISO_FEATURE_COLS)
+        "response_time_dev_from_roll": response_time_dev_from_roll,
     }
+    values.update(_role_z_features(reading, baselines))
     return pd.DataFrame([[values[c] for c in feature_cols]], columns=feature_cols)
 
 
@@ -200,11 +188,11 @@ def init_buffer():
     if "alerts" not in st.session_state:
         st.session_state.alerts = pd.DataFrame()
     if "resp_history" not in st.session_state:
-        st.session_state.resp_history = {}  # server_id -> deque ของ response_time ย้อนหลัง
+        st.session_state.resp_history = {}
 
 
 def tick(n_new: int = 5):
-    """เรียกทุกครั้งที่หน้าเว็บ autorefresh: จำลอง reading ใหม่ n_new แถว สคอร์ แล้วอัปเดต buffer"""
+    """Called on every autorefresh: simulate n_new readings, score them and update the buffer."""
     init_buffer()
     bundle, err = load_model_bundle()
     if err:
@@ -216,22 +204,22 @@ def tick(n_new: int = 5):
     feature_cols = bundle["feature_cols"]
     window = bundle["trend_window"]
     server_ids = bundle["server_ids"]
-    # .get() กันพังกับโมเดลเก่าที่เทรนไว้ก่อนเพิ่ม server_roles เข้า bundle (ต้อง
-    # train_model.py ใหม่ถึงจะมี key นี้ -- ถ้ายังไม่มี ให้ทุกเครื่องเป็น "Unknown" ไปก่อน)
     server_roles = bundle.get("server_roles", {})
+    role_baselines = bundle.get("role_baselines")
 
     new_rows = []
     for _ in range(n_new):
         server_id = random.choice(server_ids)
         prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
-        reading = _simulate_raw_reading(server_id, prob)
-        reading["role"] = server_roles.get(server_id, "Unknown")
+        role = server_roles.get(server_id, "Unknown")
+        reading = _simulate_raw_reading(server_id, prob, role, role_baselines)
+        reading["role"] = role
 
         hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
-        X = _build_feature_row(reading, scale_params, feature_cols, hist)
+        X = _build_feature_row(reading, scale_params, feature_cols, hist, role_baselines)
 
-        pred = model.predict(X)[0]              # -1 = anomaly, 1 = normal
-        score = model.decision_function(X)[0]    # ยิ่งต่ำ ยิ่งผิดปกติ
+        pred = model.predict(X)[0]
+        score = model.decision_function(X)[0]
 
         reading["is_anomaly"] = int(pred == -1)
         reading["anomaly_score"] = round(float(score), 4)
@@ -239,7 +227,7 @@ def tick(n_new: int = 5):
         reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None") if reading["is_anomaly"] else "None"
         reading.pop("_injected_type", None)
 
-        hist.append(reading["response_time"])  # อัปเดตประวัติ "หลัง" สคอร์รอบนี้แล้ว (กันเห็นค่าตัวเอง)
+        hist.append(reading["response_time"])
         new_rows.append(reading)
 
     new_df = pd.DataFrame(new_rows)

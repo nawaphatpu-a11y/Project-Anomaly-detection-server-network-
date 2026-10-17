@@ -1,20 +1,5 @@
 """
-retrain_with_independent.py
-Step 5 ต่อยอด: retrain โมเดลด้วยข้อมูลเดิม + ส่วนหนึ่งของ independent test set แล้วดูว่า
-generalize ข้าม "แหล่งข้อมูล" ได้ดีขึ้นไหม เทียบกับโมเดลเดิมที่เคย precision ร่วงหนัก
-(0.86 -> 0.10) ตอนเจอข้อมูลจาก AI อีกตัวครั้งแรก (ดู evaluate_independent.py)
-
-# แนวคิดการทดลอง (สำคัญมาก อ่านก่อนรัน):
-# ถ้าเอา independent set ทั้งไฟล์มา retrain แล้วก็เอาไฟล์เดียวกันมาวัดผล จะไม่พิสูจน์
-# อะไรเลย เพราะโมเดลแค่ "จำ" ข้อมูลที่เพิ่งเห็นไป (ไม่ต่างจากกรณี in-sample ที่เราเจอ
-# ปัญหานี้มาแล้วตอนต้นโปรเจกต์) จึงต้องแบ่ง independent set ออกเป็น 2 ส่วนก่อน:
-#   - "seen"    : เอาไป retrain รวมกับข้อมูลเดิม (metrics_clean.csv)
-#   - "holdout" : กันไว้ทดสอบเท่านั้น ห้ามใช้ตอน fit เด็ดขาด
-# แบ่งตามเวลา แยกทีละ server (เหตุผลเดียวกับ time_based_split ใน train_model.py --
-# กัน anomaly episode เดียวกันหลุดไปอยู่ทั้งสองฝั่ง)
-#
-# ผลที่ได้จาก holdout คือคำตอบจริงว่า retrain ช่วยให้โมเดล generalize ข้ามแหล่งข้อมูล
-# ได้ดีขึ้นจริงไหม ไม่ใช่แค่ท่องจำ
+ทดลอง retrain ด้วยข้อมูลเดิมรวมกับชุดอิสระส่วนแรก แล้ววัดผลกับส่วนที่เหลือ
 
 Usage:
     python retrain_with_independent.py --independent-infile independent_test_set_v2.csv
@@ -30,7 +15,8 @@ from sklearn.ensemble import IsolationForest
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
 from etl import (fix_data_errors, fix_timestamp_errors, handle_missing, add_time_features,
-                  add_engineered_features, add_trend_feature, add_severity)
+                  add_engineered_features, add_trend_feature, add_severity,
+                  compute_role_baselines, add_role_relative_features)
 from train_model import NORMALIZE_COLS, ISO_FEATURE_COLS, fit_min_max, apply_min_max, time_based_split
 
 
@@ -46,7 +32,6 @@ def main():
     parser.add_argument("--outfile", type=str, default="data/processed/evaluation_report_independent_after.csv")
     args = parser.parse_args()
 
-    # ---------- 1) เตรียม independent set ด้วยตรรกะเดียวกับตอนเทรน (import จาก etl.py) ----------
     print(f"Loading independent set: {args.independent_infile}")
     indep = pd.read_csv(args.independent_infile)
     indep = fix_data_errors(indep)
@@ -57,29 +42,27 @@ def main():
     indep = add_trend_feature(indep)
     indep = add_severity(indep)
 
-    # ---------- 2) แบ่ง seen (retrain) / holdout (ทดสอบอย่างเดียว) ----------
     seen, holdout = time_based_split(indep, test_ratio=1 - args.seen_ratio)
     print(f"Independent split: seen(retrain)={len(seen):,} rows | holdout(final test, never trained on)={len(holdout):,} rows")
 
-    # ---------- 3) รวมข้อมูลเดิม + ส่วน seen เข้าด้วยกัน ----------
     print(f"Loading original training data: {args.metrics_clean}")
     original = pd.read_csv(args.metrics_clean)
     combined = pd.concat([original, seen], ignore_index=True)
     print(f"Combined training data: {len(combined):,} rows ({len(original):,} original + {len(seen):,} from independent set)")
 
-    # ---------- 4) fit min-max ใหม่จาก combined ทั้งหมด (เหตุผลเดียวกับโมเดล deploy เดิม:
-    # ไม่มีแนวคิด train/test แล้วตรงนี้ ต้องการ range ที่ครอบคลุมข้อมูลทั้งสองแหล่ง) ----------
     scale_info = fit_min_max(combined, NORMALIZE_COLS)
     combined = apply_min_max(combined, NORMALIZE_COLS, scale_info)
     holdout = apply_min_max(holdout, NORMALIZE_COLS, scale_info)
 
-    # ---------- 5) เทรน Isolation Forest ใหม่ ----------
+    role_baselines = compute_role_baselines(combined)
+    combined = add_role_relative_features(combined, role_baselines)
+    holdout = add_role_relative_features(holdout, role_baselines)
+
     X_train = combined[ISO_FEATURE_COLS].fillna(0)
     model = IsolationForest(contamination=args.contamination, n_estimators=200,
                              random_state=args.seed, n_jobs=-1)
     model.fit(X_train)
 
-    # ---------- 6) ประเมินบน holdout เท่านั้น (คำตอบจริงของการทดลองนี้) ----------
     X_holdout = holdout[ISO_FEATURE_COLS].fillna(0)
     pred = (model.predict(X_holdout) == -1).astype(int)
     y_true = holdout["is_anomaly"]
@@ -102,9 +85,6 @@ def main():
     report.to_csv(args.outfile)
     print(f"\nSaved -> {args.outfile}")
 
-    # ---------- 7) เซฟโมเดล retrain ไว้ต่างหาก (ไม่ทับโมเดล deploy เดิมอัตโนมัติ) ----------
-    # ตั้งใจไม่ให้ทับ models/isolation_forest.joblib ตรงๆ -- ดูผลเทียบกันในหน้า Model
-    # Evaluation ก่อน ค่อยตัดสินใจเองว่าจะเอาไฟล์นี้ไป deploy แทนของเดิมไหม
     model_dir = os.path.dirname(args.model_out)
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
@@ -119,6 +99,7 @@ def main():
         "trend_window": 12,
         "server_ids": sorted(combined["server_id"].unique().tolist()),
         "server_roles": server_roles,
+        "role_baselines": role_baselines,
     }, args.model_out)
     print(f"Saved retrained model -> {args.model_out} (ยังไม่ได้ใช้แทนโมเดล deploy เดิม)")
 

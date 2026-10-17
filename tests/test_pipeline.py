@@ -1,10 +1,6 @@
 """
-tests/test_pipeline.py
-เทสต์ระดับ unit ของฟังก์ชันหลักใน generate_data.py / etl.py / train_model.py
-รัน: pytest -v (จาก root ของโปรเจกต์ — conftest.py เติม path ให้ import สคริปต์ระดับ root ได้)
-
-เทสต์บางตัวในนี้เขียนขึ้นเพื่อ "กันบั๊กที่เคยเจอจริง" ไม่ให้กลับมาอีก (regression test)
-ไม่ใช่แค่เช็คว่ารันไม่พังผิวเผิน
+เทสต์หน่วยของ generate_data.py, etl.py และ train_model.py
+รัน: pytest -v
 """
 import numpy as np
 import pandas as pd
@@ -14,8 +10,6 @@ import generate_data
 import etl
 import train_model
 
-
-# ---------- generate_data.py ----------
 
 def test_make_server_profiles_shape():
     rng = np.random.default_rng(1)
@@ -53,8 +47,6 @@ def test_inject_true_anomalies_sets_positive_labels():
 
 
 def test_inject_data_errors_never_touches_true_anomaly_rows():
-    # REGRESSION TEST: บั๊กเดิมคือ inject_data_errors สุ่มจาก df.index ทั้งหมด รวมถึงแถวที่
-    # เพิ่งถูกทำเป็น True Anomaly ไปแล้ว ทำให้ label เพี้ยนตอน ETL เติม missing ทับค่าจริง
     rng = np.random.default_rng(7)
     profiles = generate_data.make_server_profiles(3, rng)
     hours = np.array([10] * 200)
@@ -76,8 +68,6 @@ def test_inject_data_errors_never_touches_true_anomaly_rows():
     overlap = df[(df["is_anomaly"] == 1) & corrupted]
     assert len(overlap) == 0, "data error ไปทับ True Anomaly row -- บั๊กเดิมกลับมาอีกแล้ว"
 
-
-# ---------- etl.py ----------
 
 @pytest.fixture
 def raw_df():
@@ -115,8 +105,6 @@ def test_handle_missing_leaves_no_nan(raw_df):
 
 
 def test_fit_apply_min_max_train_only_stays_in_zero_one_range(raw_df):
-    # normalize ย้ายไปอยู่ train_model.py แล้ว (fit จาก train เท่านั้น กัน data leakage --
-    # ดู train_model.py::fit_min_max / apply_min_max)
     df = etl.fix_data_errors(raw_df.copy())
     df = etl.handle_missing(df)
     scale_info = train_model.fit_min_max(df, ["cpu_usage", "memory_usage"])
@@ -127,32 +115,25 @@ def test_fit_apply_min_max_train_only_stays_in_zero_one_range(raw_df):
 
 
 def test_apply_min_max_clips_out_of_range_values():
-    # REGRESSION TEST: ค่าที่หลุดช่วง [min, max] ที่ fit ไว้ (เช่น test set มี anomaly
-    # แรงกว่าที่เคยเห็นตอน fit จาก train) ต้องถูก clip ไว้ที่ 0-1 ไม่ใช่ติดลบ/เกิน 1
     train_part = pd.DataFrame({"cpu_usage": [10.0, 20.0, 30.0]})
     scale_info = train_model.fit_min_max(train_part, ["cpu_usage"])
-    unseen_part = pd.DataFrame({"cpu_usage": [-5.0, 100.0]})  # นอกช่วง [10, 30] ที่ fit ไว้
+    unseen_part = pd.DataFrame({"cpu_usage": [-5.0, 100.0]})
     result = train_model.apply_min_max(unseen_part, ["cpu_usage"], scale_info)
     assert result["cpu_usage_norm"].between(0, 1).all()
 
 
 def test_trend_feature_is_causal_not_using_future_values():
-    # REGRESSION TEST: ต้องมั่นใจว่า response_time_dev_from_roll ไม่แอบใช้ค่าจาก "อนาคต"
-    # (ไม่งั้นจะกลายเป็น data leakage ตอนเทรน/ประเมินผล)
     df = pd.DataFrame({
         "server_id": ["SRV-001"] * 20,
-        "response_time": [50.0] * 15 + [500.0] * 5,  # ค่าพุ่งช่วงท้าย
+        "response_time": [50.0] * 15 + [500.0] * 5,
     })
     result_before_spike = etl.add_trend_feature(df.copy(), window=5)
-    # แก้ไขค่าช่วง "อนาคต" (index 18) แล้วเช็คว่า dev_from_roll ของแถวก่อนหน้า (index 14) ไม่เปลี่ยน
     df2 = df.copy()
     df2.loc[18, "response_time"] = 9999.0
     result_after_edit = etl.add_trend_feature(df2, window=5)
     assert result_before_spike.loc[14, "response_time_dev_from_roll"] == \
         result_after_edit.loc[14, "response_time_dev_from_roll"]
 
-
-# ---------- train_model.py ----------
 
 def test_time_based_split_no_row_overlap_and_chronological():
     df = pd.DataFrame({
@@ -168,8 +149,6 @@ def test_time_based_split_no_row_overlap_and_chronological():
         assert train_max < test_min, "test set ต้องมาทีหลัง train set เสมอ (time-based split)"
 
 
-# ---------- ฟังก์ชันใหม่: timestamp error, severity, IQR ----------
-
 def test_fix_timestamp_errors_removes_malformed_rows():
     df = pd.DataFrame({
         "server_id": ["SRV-001"] * 4,
@@ -177,7 +156,7 @@ def test_fix_timestamp_errors_removes_malformed_rows():
         "cpu_usage": [10, 20, 30, 40],
     })
     cleaned = etl.fix_timestamp_errors(df)
-    assert len(cleaned) == 2  # เหลือแค่ 2 แถวที่ parse ได้จริง
+    assert len(cleaned) == 2
     assert cleaned["timestamp"].notna().all()
 
 
@@ -188,9 +167,60 @@ def test_add_severity_maps_known_types_and_defaults_none():
 
 
 def test_iqr_baseline_flags_far_outliers_not_normal_points():
-    # ข้อมูล train แจกแจงปกติแคบๆ รอบ 0 ส่วน test มีทั้งจุดปกติและจุดที่ไกลลิบ (outlier ชัดเจน)
     rng = np.random.default_rng(0)
     train = pd.DataFrame({"x": rng.normal(0, 1, 500)})
-    test = pd.DataFrame({"x": [0.1, -0.2, 50.0, -50.0]})  # 2 จุดปกติ, 2 จุดไกลลิบ
+    test = pd.DataFrame({"x": [0.1, -0.2, 50.0, -50.0]})
     pred = train_model.iqr_baseline(train, test)
     assert list(pred) == [0, 0, 1, 1]
+
+
+def test_server_profiles_cover_all_roles_and_differ_in_baseline():
+    rng = np.random.default_rng(3)
+    profiles = generate_data.make_server_profiles(15, rng)
+    assert set(profiles["role"]) == set(generate_data.SERVER_ROLES)
+    med = profiles.groupby("role")[["base_cpu", "base_mem", "base_net_out", "base_resp"]].mean()
+    assert med.loc["Database Server", "base_mem"] > med.loc["Web Server", "base_mem"] + 15
+    assert med.loc["App Server", "base_cpu"] > med.loc["Web Server", "base_cpu"] + 10
+    assert med.loc["Web Server", "base_net_out"] > med.loc["Database Server", "base_net_out"] + 40
+
+
+def test_cpu_spike_never_pushes_memory_above_100():
+    rng = np.random.default_rng(5)
+    profiles = generate_data.make_server_profiles(6, rng)
+    hours = np.array([10] * 300)
+    frames = []
+    for _, p in profiles.iterrows():
+        baseline = generate_data.generate_baseline(300, hours, p, rng)
+        frame = pd.DataFrame({"server_id": p["server_id"], **baseline})
+        frame["is_anomaly"] = 0
+        frame["anomaly_type"] = "NONE"
+        frames.append(frame)
+    df = generate_data.inject_true_anomalies(pd.concat(frames, ignore_index=True), rng, target_ratio=0.3)
+    assert df["memory_usage"].max() <= 100
+
+
+def test_role_relative_feature_is_zero_at_role_median_and_flags_other_roles():
+    df = pd.DataFrame({
+        "role": ["Web Server"] * 5 + ["App Server"] * 5,
+        "cpu_usage": [30, 31, 32, 33, 34, 55, 56, 57, 58, 59],
+        "memory_usage": [30] * 10, "network_in": [100] * 10,
+        "network_out": [100] * 10, "response_time": [80] * 10,
+    })
+    baselines = etl.compute_role_baselines(df)
+    out = etl.add_role_relative_features(df, baselines)
+    assert out.loc[2, "cpu_usage_role_z"] == 0 and out.loc[7, "cpu_usage_role_z"] == 0
+    web_with_app_level = pd.DataFrame({"role": ["Web Server"], "cpu_usage": [57], "memory_usage": [30],
+                                       "network_in": [100], "network_out": [100], "response_time": [80]})
+    z = etl.add_role_relative_features(web_with_app_level, baselines)["cpu_usage_role_z"].iloc[0]
+    assert z > 10
+
+
+def test_role_relative_feature_falls_back_to_global_for_unseen_role():
+    df = pd.DataFrame({"role": ["Web Server"] * 4, "cpu_usage": [30, 31, 32, 33],
+                       "memory_usage": [30] * 4, "network_in": [100] * 4,
+                       "network_out": [100] * 4, "response_time": [80] * 4})
+    baselines = etl.compute_role_baselines(df)
+    unseen = df.iloc[:1].copy()
+    unseen["role"] = "Cache Server"
+    out = etl.add_role_relative_features(unseen, baselines)
+    assert np.isfinite(out["cpu_usage_role_z"].iloc[0])

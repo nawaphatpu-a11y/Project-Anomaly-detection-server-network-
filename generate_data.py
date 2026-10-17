@@ -1,7 +1,5 @@
 """
-generate_data.py
-Generate simulated Server/Network metric data with intentionally injected anomalies
-# สำหรับใช้ในระบบตรวจจับความผิดปกติของทรัพยากรเซิร์ฟเวอร์และเครือข่าย
+สร้างข้อมูล metric ของเซิร์ฟเวอร์จำลอง พร้อมแทรกความผิดปกติและข้อมูลผิดพลาด
 
 Usage:
     python generate_data.py --servers 15 --days 30 --interval 5 --outfile data/raw/metrics.csv
@@ -13,42 +11,47 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 
-# ---------- ตั้งค่าพื้นฐาน (baseline) ของแต่ละ server ----------
-# แต่ละเครื่องมีพฤติกรรม "ปกติ" ไม่เท่ากันเล็กน้อย เพื่อความสมจริง
 SERVER_ROLES = ["Web Server", "Database Server", "App Server"]
 
 
 SERVER_ROLES = ["Web Server", "Database Server", "App Server"]
-# Dim_Server ตาม ER Diagram/Star Schema ที่ออกแบบไว้ระบุ field "location" -- ของเดิมไม่มี
 SERVER_LOCATIONS = ["Bangkok-DC1", "Bangkok-DC2", "Nonthaburi-DC1"]
 
 
+ROLE_BASELINES = {
+    "Web Server":      {"cpu": (22, 36), "mem": (25, 40), "net_in": (120, 220), "net_out": (150, 260), "resp": (40, 90)},
+    "Database Server": {"cpu": (30, 45), "mem": (52, 68), "net_in": (50, 100),  "net_out": (40, 90),   "resp": (90, 180)},
+    "App Server":      {"cpu": (40, 58), "mem": (40, 55), "net_in": (70, 130),  "net_out": (70, 130),  "resp": (60, 120)},
+}
+
+
 def make_server_profiles(n_servers: int, rng: np.random.Generator) -> pd.DataFrame:
-    # สุ่มสร้างโปรไฟล์พื้นฐานของแต่ละเครื่อง (ค่าเฉลี่ยปกติของแต่ละ metric)
-    roles = rng.choice(SERVER_ROLES, size=n_servers)
+    roles = np.array([SERVER_ROLES[i % len(SERVER_ROLES)] for i in range(n_servers)])
+    roles = rng.permutation(roles)
     locations = rng.choice(SERVER_LOCATIONS, size=n_servers)
+
+    def draw(metric: str) -> np.ndarray:
+        return np.array([rng.uniform(*ROLE_BASELINES[r][metric]) for r in roles])
+
     profiles = pd.DataFrame({
         "server_id": [f"SRV-{i+1:03d}" for i in range(n_servers)],
         "hostname": [f"host-{i+1:03d}" for i in range(n_servers)],
         "role": roles,
         "location": locations,
-        # ค่าเฉลี่ย "ปกติ" ของแต่ละเครื่อง (สุ่มต่างกันเล็กน้อย)
-        "base_cpu": rng.uniform(20, 40, size=n_servers),
-        "base_mem": rng.uniform(30, 50, size=n_servers),
-        "base_net_in": rng.uniform(50, 150, size=n_servers),
-        "base_net_out": rng.uniform(50, 150, size=n_servers),
-        "base_resp": rng.uniform(50, 150, size=n_servers),
+        "base_cpu": draw("cpu"),
+        "base_mem": draw("mem"),
+        "base_net_in": draw("net_in"),
+        "base_net_out": draw("net_out"),
+        "base_resp": draw("resp"),
     })
     return profiles
 
 
 def is_peak_hour(hour: int) -> bool:
-    # ช่วงเวลาทำงานปกติ 9:00-18:00 ถือเป็น peak hour
     return 9 <= hour < 18
 
 
 def generate_baseline(n_rows: int, hours: np.ndarray, profile: pd.Series, rng: np.random.Generator) -> dict:
-    # สร้างค่า metric ปกติ พร้อม noise และผลของ peak/off-peak hour
     peak_mask = np.isin(hours, list(range(9, 18))).astype(float)
 
     cpu = profile["base_cpu"] + peak_mask * rng.uniform(5, 15) + rng.normal(0, 4, n_rows)
@@ -57,7 +60,6 @@ def generate_baseline(n_rows: int, hours: np.ndarray, profile: pd.Series, rng: n
     net_out = profile["base_net_out"] + peak_mask * rng.uniform(20, 60) + rng.normal(0, 10, n_rows)
     resp = profile["base_resp"] + peak_mask * rng.uniform(10, 30) + rng.normal(0, 8, n_rows)
 
-    # ค่าตัวเลขต้องไม่ติดลบ (ค่าปกติ)
     cpu = np.clip(cpu, 1, 99)
     mem = np.clip(mem, 1, 99)
     net_in = np.clip(net_in, 1, None)
@@ -69,16 +71,12 @@ def generate_baseline(n_rows: int, hours: np.ndarray, profile: pd.Series, rng: n
 
 
 def inject_true_anomalies(df: pd.DataFrame, rng: np.random.Generator, target_ratio: float = 0.03):
-    # แทรก 'ความผิดปกติจริง' (True Anomaly) แบบต่อเนื่องเป็นช่วง (episode)
-    # เพื่อจำลองเหตุการณ์จริง เช่น โปรเซสค้าง, ถูกโจมตี, ระบบใกล้ล่ม
-    # ทำเครื่องหมาย is_anomaly = 1 และระบุ anomaly_type
     n = len(df)
     target_anomaly_rows = int(n * target_ratio)
     anomaly_types = ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION"]
     rows_done = 0
     server_ids = df["server_id"].unique()
 
-    # FIX: กันลูปไม่รู้จบ (edge case เช่น target_ratio สูงเกินกว่าจะแทรกได้จริงโดยไม่ทับกันเยอะเกินไป)
     max_attempts = target_anomaly_rows * 20 + 1000
     attempts = 0
 
@@ -90,18 +88,18 @@ def inject_true_anomalies(df: pd.DataFrame, rng: np.random.Generator, target_rat
             continue
 
         start = rng.integers(0, len(server_rows) - 20)
-        episode_len = rng.integers(6, 20)  # ผิดปกติต่อเนื่อง 6-20 จุดข้อมูล
+        episode_len = rng.integers(6, 20)
         idx = server_rows[start:start + episode_len]
         atype = rng.choice(anomaly_types)
 
         if atype == "CPU_SPIKE":
             df.loc[idx, "cpu_usage"] = rng.uniform(92, 100, size=len(idx))
             df.loc[idx, "memory_usage"] += rng.uniform(10, 20, size=len(idx))
+            df.loc[idx, "memory_usage"] = df.loc[idx, "memory_usage"].clip(upper=99)
         elif atype == "NETWORK_SURGE":
             df.loc[idx, "network_in"] *= rng.uniform(5, 10)
             df.loc[idx, "network_out"] *= rng.uniform(5, 10)
         elif atype == "RESPONSE_DEGRADATION":
-            # ค่อยๆ แย่ลงต่อเนื่อง (linear ramp) แทนที่จะพุ่งทันที
             ramp = np.linspace(1.2, 4.0, num=len(idx))
             df.loc[idx, "response_time"] *= ramp
 
@@ -116,29 +114,21 @@ def inject_true_anomalies(df: pd.DataFrame, rng: np.random.Generator, target_rat
 
 
 def inject_data_errors(df: pd.DataFrame, rng: np.random.Generator, error_ratio: float = 0.015):
-    # แทรก 'ข้อผิดพลาดของข้อมูล' (Data Error / GIGO) เช่น ค่าเป็นไปไม่ได้ หรือ missing value
-    # สิ่งเหล่านี้ "ไม่ใช่" True Anomaly — ต้องถูกกำจัด/แก้ไขตอน ETL (Step 3) ไม่ใช่เป้าหมายให้โมเดลตรวจจับ
-    # (จึงไม่ตั้ง is_anomaly = 1 ให้ค่าพวกนี้)
-    #
-    # FIX (บั๊กสำคัญ): เดิมสุ่มจาก df.index ทั้งหมด ซึ่งอาจไปสุ่มโดนแถวที่เพิ่งถูกทำเป็น
-    # True Anomaly ใน inject_true_anomalies() มาก่อน -> พอ ETL เติม missing ด้วย ffill/bfill
-    # ค่าผิดปกติจริงจะถูกเขียนทับหายไป ทั้งที่ label ยังเป็น is_anomaly=1 อยู่ (label เพี้ยน)
-    # แก้โดยสุ่มเฉพาะแถวที่ is_anomaly == 0 เท่านั้น
     normal_idx = df.index[df["is_anomaly"] == 0]
     n_errors = int(len(df) * error_ratio)
-    n_errors = min(n_errors, len(normal_idx))  # กันกรณี error_ratio สูงเกินจำนวนแถวปกติที่เหลือ
+    n_errors = min(n_errors, len(normal_idx))
     error_idx = rng.choice(normal_idx, size=n_errors, replace=False)
 
     for i in error_idx:
         choice = rng.integers(0, 4)
         if choice == 0:
-            df.loc[i, "cpu_usage"] = rng.uniform(101, 150)          # เป็นไปไม่ได้ (>100%)
+            df.loc[i, "cpu_usage"] = rng.uniform(101, 150)
         elif choice == 1:
-            df.loc[i, "response_time"] = -abs(rng.uniform(1, 50))    # ติดลบ (เป็นไปไม่ได้)
+            df.loc[i, "response_time"] = -abs(rng.uniform(1, 50))
         elif choice == 2:
-            df.loc[i, "memory_usage"] = np.nan                       # missing value
+            df.loc[i, "memory_usage"] = np.nan
         else:
-            df.loc[i, "network_in"] = np.nan                         # missing value
+            df.loc[i, "network_in"] = np.nan
 
     return df
 
@@ -151,7 +141,6 @@ def main():
     parser.add_argument("--anomaly-ratio", type=float, default=0.03, help="target ratio of True Anomaly rows")
     parser.add_argument("--error-ratio", type=float, default=0.015, help="target ratio of Data Error rows")
     parser.add_argument("--seed", type=int, default=42, help="random seed for reproducibility")
-    # FIX: default path ตอนนี้ตรงกับ default --infile ของ etl.py แล้ว (เดิมคือ "metrics.csv" เฉยๆ ทำให้ chain กันไม่ติด)
     parser.add_argument("--outfile", type=str, default="data/raw/metrics.csv", help="output file path")
     args = parser.parse_args()
 
@@ -187,9 +176,8 @@ def main():
     df = df.sort_values(["server_id", "timestamp"]).reset_index(drop=True)
 
     df = inject_true_anomalies(df, rng, target_ratio=args.anomaly_ratio)
-    df = inject_data_errors(df, rng, error_ratio=args.error_ratio)  # ตอนนี้เรียกหลัง และไม่ทับ True Anomaly แล้ว
+    df = inject_data_errors(df, rng, error_ratio=args.error_ratio)
 
-    # FIX: สร้างโฟลเดอร์ปลายทางให้อัตโนมัติ กัน FileNotFoundError ถ้ายังไม่มีโฟลเดอร์ data/raw/
     out_dir = os.path.dirname(args.outfile)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
