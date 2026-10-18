@@ -35,7 +35,7 @@ health_score = 100 * (1 - total_anomalies / total_readings) if total_readings el
 servers_online = df["server_id"].nunique()
 
 c1, c2, c3 = st.columns(3)
-c1.metric(t("metric.health"), f"{health_score:.1f}%")
+c1.metric(t("metric.health"), f"{health_score:.1f}%", help=t("metric.health_help"))
 c2.metric(t("metric.anomalies"), f"{total_anomalies}")
 c3.metric(t("metric.servers"), f"{servers_online}")
 

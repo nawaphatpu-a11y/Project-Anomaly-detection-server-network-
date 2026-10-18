@@ -279,7 +279,8 @@ def live_settings():
     rows = st.sidebar.slider(
         t("sidebar.rows"), 1, 20, st.session_state.get("rows_per_tick", DEFAULT_ROWS_PER_TICK),
         format=f"%d {t('unit.rows')}")
-    paused = st.sidebar.checkbox(t("sidebar.pause"), value=st.session_state.get("live_paused", False))
+    paused = st.sidebar.checkbox(t("sidebar.pause"), value=st.session_state.get("live_paused", False),
+                                 help=t("sidebar.pause_help"))
     st.session_state["refresh_seconds"] = refresh
     st.session_state["rows_per_tick"] = rows
     st.session_state["live_paused"] = paused

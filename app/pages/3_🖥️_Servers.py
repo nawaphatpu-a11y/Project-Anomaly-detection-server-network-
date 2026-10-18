@@ -26,7 +26,6 @@ refresh_seconds, rows_per_tick, paused = live_settings()
 live_update(refresh_seconds, rows_per_tick, paused, "servers_autorefresh")
 
 st.title(t("servers.title"))
-st.caption(t("servers.caption"))
 
 df = st.session_state.readings
 if df.empty:
@@ -57,19 +56,30 @@ status_of = dict(zip(table["server_id"], table["status"]))
 role_of = {**(bundle.get("server_roles", {}) if bundle else {}), **dict(zip(table["server_id"], table["role"]))}
 server_ids = sorted(bundle["server_ids"]) if bundle else sorted(table["server_id"])
 
-if st.button(t("servers.jump")):
-    st.session_state["selected_server"] = table["server_id"].iloc[0]
-saved_server = st.session_state.get("selected_server") or table["server_id"].iloc[0]
+top_server = table["server_id"].iloc[0]
 
 
-server = st.selectbox(t("servers.select"), server_ids, index=pick_index(server_ids, saved_server),
-                      format_func=lambda s: f"{s} | {role_of.get(s, '')}")
+def jump_to_top_server(target):
+    st.session_state["jump_notice"] = (target, st.session_state.get("server_select") == target)
+    st.session_state["server_select"] = target
+
+
+if st.session_state.get("server_select") not in server_ids:
+    saved_server = st.session_state.get("selected_server")
+    st.session_state["server_select"] = saved_server if saved_server in server_ids else top_server
+
+st.button(t("servers.jump"), on_click=jump_to_top_server, args=(top_server,))
+notice = st.session_state.pop("jump_notice", None)
+if notice:
+    st.success(t("servers.already" if notice[1] else "servers.jumped", server=notice[0]))
+
+server = st.selectbox(t("servers.select"), server_ids, format_func=lambda s: f"{s} | {role_of.get(s, '')}",
+                      key="server_select")
 st.session_state["selected_server"] = server
 if server in status_of:
     st.caption(f"{STATUS_ICON[status_of[server]]} {t(f'status.{status_of[server]}')}")
 else:
     st.caption(t("servers.no_data_label"))
-st.caption(t("servers.pause_tip"))
 
 st.divider()
 st.subheader(t("servers.detail", server=server))
@@ -86,7 +96,7 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric(f"{t('col.cpu_usage')} ({t('servers.latest')})", f"{latest['cpu_usage']:.1f}%")
 c2.metric(f"{t('col.memory_usage')} ({t('servers.latest')})", f"{latest['memory_usage']:.1f}%")
 c3.metric(f"{t('col.response_time')} ({t('servers.latest')})", f"{latest['response_time']:.0f}")
-c4.metric(t("col.alert_rate"), f"{row['alert_rate']:.1f}%")
+c4.metric(t("col.alert_rate"), f"{row['alert_rate']:.1f}%", help=t("servers.alert_rate_help"))
 
 metric = st.selectbox(t("servers.metric"), METRICS, index=pick_index(METRICS, st.session_state.get("selected_metric")),
                       format_func=lambda m: t(f"col.{m}"))
@@ -119,10 +129,12 @@ else:
         hist_metrics = st.multiselect(t("servers.hist_metric"), METRICS, format_func=lambda m: t(f"col.{m}"),
                                       default=keep_valid(st.session_state.get("saved_hist_metrics"), METRICS))
     with f3:
-        hist_above = st.checkbox(t("servers.hist_above"), value=st.session_state.get("saved_hist_above", False))
+        hist_above = st.checkbox(t("servers.hist_above"), value=st.session_state.get("saved_hist_above", False),
+                                 help=t("servers.hist_above_help"))
     with f4:
         hist_hide_other = st.checkbox(t("servers.hist_hide_other"),
-                                      value=st.session_state.get("saved_hist_hide_other", False))
+                                      value=st.session_state.get("saved_hist_hide_other", False),
+                                      help=t("servers.hist_hide_other_help"))
     st.session_state["saved_hist_types"] = hist_types
     st.session_state["saved_hist_metrics"] = hist_metrics
     st.session_state["saved_hist_above"] = hist_above
