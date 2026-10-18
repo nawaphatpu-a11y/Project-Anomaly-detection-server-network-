@@ -360,3 +360,15 @@ def test_normal_band_uses_role_baseline_and_handles_unknown_role():
     assert round(high - 30.0, 2) == round(30.0 - low, 2)
     assert server_view.normal_band(baselines, "Cache Server", "cpu_usage") is None
     assert server_view.normal_band(None, "Web Server", "cpu_usage") is None
+
+
+def test_pick_index_restores_saved_choice_and_falls_back():
+    options = ["SRV-001", "SRV-002", "SRV-003"]
+    assert server_view.pick_index(options, "SRV-003") == 2
+    assert server_view.pick_index(options, "SRV-999") == 0
+    assert server_view.pick_index(options, None, fallback=1) == 1
+
+
+def test_keep_valid_drops_choices_that_no_longer_exist():
+    assert server_view.keep_valid(["a", "z"], ["a", "b"]) == ["a"]
+    assert server_view.keep_valid(None, ["a"]) == []

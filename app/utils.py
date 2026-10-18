@@ -288,6 +288,8 @@ def live_settings():
         st.session_state.readings = pd.DataFrame()
         st.session_state.alerts = pd.DataFrame()
         st.session_state.resp_history = {}
+        for stale in ("alert_pool", "alert_pool_signature", "alert_pool_time", "saved_alert_choice"):
+            st.session_state.pop(stale, None)
     return refresh, rows, paused
 
 
