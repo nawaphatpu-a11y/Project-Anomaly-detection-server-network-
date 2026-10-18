@@ -9,7 +9,8 @@ import streamlit as st
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
 from server_view import STATUS_ICON, normal_band, overview, pick_index, status_counts
-from utils import HISTORY_PER_SERVER, init_buffer, live_settings, live_update, load_model_bundle, localize_alerts
+from utils import (HISTORY_PER_SERVER, init_buffer, live_settings, live_update, load_model_bundle,
+                   localize_alerts, show_wrapped_table)
 
 METRICS = ["cpu_usage", "memory_usage", "network_in", "network_out", "response_time"]
 BAND_METRICS = {"cpu_usage", "memory_usage", "network_in", "network_out", "response_time"}
@@ -112,9 +113,9 @@ else:
     history = localize_alerts(flagged.sort_values("timestamp", ascending=False).head(20))
     history["alert_type"] = history["alert_type"].map(type_label)
     history["severity_level"] = history["severity_level"].map(severity_label)
+    history["timestamp"] = history["timestamp"].astype(str).str[:19]
     columns = ["timestamp", "alert_type", "severity_level", "probable_cause", "top_signals", "suggested_check"]
-    st.dataframe(history[columns].rename(columns=column_labels(columns)),
-                 use_container_width=True, hide_index=True)
+    show_wrapped_table(history[columns].rename(columns=column_labels(columns)))
 
 st.subheader(t("servers.peers", role=role))
 peers = df[df["role"] == role].copy()

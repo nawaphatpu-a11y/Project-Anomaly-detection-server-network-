@@ -299,3 +299,7 @@ def live_update(refresh, rows, paused, key):
         return None
     st_autorefresh(interval=refresh * 1000, key=key)
     return tick(n_new=rows)
+
+
+def show_wrapped_table(df):
+    st.table(df.reset_index(drop=True).style.hide(axis="index"))
