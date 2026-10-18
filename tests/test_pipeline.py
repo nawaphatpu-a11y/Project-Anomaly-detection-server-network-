@@ -372,3 +372,41 @@ def test_pick_index_restores_saved_choice_and_falls_back():
 def test_keep_valid_drops_choices_that_no_longer_exist():
     assert server_view.keep_valid(["a", "z"], ["a", "b"]) == ["a"]
     assert server_view.keep_valid(None, ["a"]) == []
+
+
+def _history():
+    return pd.DataFrame({
+        "alert_type": ["CPU_SPIKE", "Other", "Other", "NETWORK_SURGE"],
+        "signals_raw": [
+            "cpu_usage_role_z:12.40;memory_usage_role_z:4.00",
+            "memory_usage_role_z:-3.80;network_in_role_z:-2.40",
+            "cpu_usage_role_z:-4.20",
+            "network_out_role_z:70.40;network_in_role_z:43.50",
+        ],
+    })
+
+
+def test_history_filter_by_type_and_hide_other():
+    df = _history()
+    assert len(server_view.filter_history(df)) == 4
+    assert server_view.filter_history(df, types=["NETWORK_SURGE"]).index.tolist() == [3]
+    assert server_view.filter_history(df, hide_other=True).index.tolist() == [0, 3]
+
+
+def test_history_filter_by_metric_in_strongest_signals():
+    df = _history()
+    assert server_view.filter_history(df, metrics=["memory_usage"]).index.tolist() == [0, 1]
+    assert server_view.filter_history(df, metrics=["cpu_usage", "network_out"]).index.tolist() == [0, 2, 3]
+
+
+def test_history_filter_above_normal_only_drops_low_values():
+    df = _history()
+    assert server_view.filter_history(df, metrics=["memory_usage"], above_only=True).index.tolist() == [0]
+    assert server_view.filter_history(df, above_only=True).index.tolist() == [0, 3]
+
+
+def test_history_filter_combines_conditions_and_tolerates_missing_signals():
+    df = _history()
+    assert server_view.filter_history(df, types=["Other"], metrics=["cpu_usage"]).index.tolist() == [2]
+    df.loc[1, "signals_raw"] = None
+    assert server_view.filter_history(df, metrics=["memory_usage"]).index.tolist() == [0]

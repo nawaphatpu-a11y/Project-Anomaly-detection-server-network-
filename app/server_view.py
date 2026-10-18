@@ -43,3 +43,26 @@ def pick_index(options, saved, fallback=0):
 
 def keep_valid(saved, options):
     return [item for item in (saved or []) if item in options]
+
+
+def parse_signals(raw):
+    if not raw or not isinstance(raw, str):
+        return []
+    return [(part.split(":")[0], float(part.split(":")[1])) for part in raw.split(";")]
+
+
+def filter_history(df, types=None, metrics=None, above_only=False, hide_other=False):
+    out = df
+    if hide_other:
+        out = out[out["alert_type"] != "Other"]
+    if types:
+        out = out[out["alert_type"].isin(types)]
+    if metrics or above_only:
+        wanted = {f"{m}_role_z" for m in metrics} if metrics else None
+
+        def matches(raw):
+            return any((wanted is None or key in wanted) and (z > 0 or not above_only)
+                       for key, z in parse_signals(raw))
+
+        out = out[out["signals_raw"].map(matches)]
+    return out

@@ -8,12 +8,13 @@ import plotly.express as px
 import streamlit as st
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
-from server_view import STATUS_ICON, normal_band, overview, pick_index, status_counts
+from server_view import STATUS_ICON, filter_history, keep_valid, normal_band, overview, pick_index, status_counts
 from utils import (HISTORY_PER_SERVER, init_buffer, live_settings, live_update, load_model_bundle,
                    localize_alerts, show_wrapped_table)
 
 METRICS = ["cpu_usage", "memory_usage", "network_in", "network_out", "response_time"]
 BAND_METRICS = {"cpu_usage", "memory_usage", "network_in", "network_out", "response_time"}
+TYPE_OPTIONS = ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION", "Other"]
 
 st.set_page_config(page_title="Servers", page_icon="🖥️", layout="wide")
 init_buffer()
@@ -110,12 +111,34 @@ st.subheader(t("servers.alert_history"))
 if flagged.empty:
     st.success(t("servers.no_alerts"))
 else:
-    history = localize_alerts(flagged.sort_values("timestamp", ascending=False).head(20))
-    history["alert_type"] = history["alert_type"].map(type_label)
-    history["severity_level"] = history["severity_level"].map(severity_label)
-    history["timestamp"] = history["timestamp"].astype(str).str[:19]
-    columns = ["timestamp", "alert_type", "severity_level", "probable_cause", "top_signals", "suggested_check"]
-    show_wrapped_table(history[columns].rename(columns=column_labels(columns)))
+    f1, f2, f3, f4 = st.columns([2, 3, 2, 2])
+    with f1:
+        hist_types = st.multiselect(t("servers.hist_type"), TYPE_OPTIONS, format_func=type_label,
+                                    default=keep_valid(st.session_state.get("saved_hist_types"), TYPE_OPTIONS))
+    with f2:
+        hist_metrics = st.multiselect(t("servers.hist_metric"), METRICS, format_func=lambda m: t(f"col.{m}"),
+                                      default=keep_valid(st.session_state.get("saved_hist_metrics"), METRICS))
+    with f3:
+        hist_above = st.checkbox(t("servers.hist_above"), value=st.session_state.get("saved_hist_above", False))
+    with f4:
+        hist_hide_other = st.checkbox(t("servers.hist_hide_other"),
+                                      value=st.session_state.get("saved_hist_hide_other", False))
+    st.session_state["saved_hist_types"] = hist_types
+    st.session_state["saved_hist_metrics"] = hist_metrics
+    st.session_state["saved_hist_above"] = hist_above
+    st.session_state["saved_hist_hide_other"] = hist_hide_other
+
+    matched = filter_history(flagged, hist_types, hist_metrics, hist_above, hist_hide_other)
+    st.caption(t("servers.hist_count", shown=min(len(matched), 20), total=len(flagged)))
+    if matched.empty:
+        st.info(t("servers.hist_none"))
+    else:
+        history = localize_alerts(matched.sort_values("timestamp", ascending=False).head(20))
+        history["alert_type"] = history["alert_type"].map(type_label)
+        history["severity_level"] = history["severity_level"].map(severity_label)
+        history["timestamp"] = history["timestamp"].astype(str).str[:19]
+        columns = ["timestamp", "alert_type", "severity_level", "probable_cause", "top_signals", "suggested_check"]
+        show_wrapped_table(history[columns].rename(columns=column_labels(columns)))
 
 st.subheader(t("servers.peers", role=role))
 peers = df[df["role"] == role].copy()
