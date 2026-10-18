@@ -9,7 +9,7 @@ import streamlit as st
 
 from i18n import column_labels, language_selector, severity_label, t, type_label
 from server_view import keep_valid, pick_index
-from utils import init_buffer, live_settings, live_update, localize_alerts
+from utils import init_buffer, live_settings, live_update, load_model_bundle, localize_alerts
 
 st.set_page_config(page_title="Alerts", page_icon="🔔", layout="wide")
 init_buffer()
@@ -29,8 +29,9 @@ if alerts.empty:
     st.stop()
 
 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-type_options = sorted(alerts["alert_type"].dropna().unique())
-server_options = sorted(alerts["server_id"].unique())
+bundle, _ = load_model_bundle()
+type_options = ["CPU_SPIKE", "NETWORK_SURGE", "RESPONSE_DEGRADATION", "Other"]
+server_options = sorted(bundle["server_ids"]) if bundle else sorted(alerts["server_id"].unique())
 severity_options = ["High", "Medium", "Low"]
 sort_options = ["severity", "recent"]
 with col1:

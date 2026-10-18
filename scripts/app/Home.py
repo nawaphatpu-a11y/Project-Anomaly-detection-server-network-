@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 import plotly.express as px
 import streamlit as st
 from i18n import column_labels, language_selector, t, type_label
-from utils import init_buffer, live_settings, live_update, localize_alerts
+from utils import init_buffer, live_settings, live_update, localize_alerts, show_wrapped_table
 
 st.set_page_config(page_title="Server & Network Health", page_icon="📊", layout="wide")
 init_buffer()
@@ -134,8 +134,10 @@ st.subheader(t("section.latest"))
 recent = localize_alerts(df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10))
 if not recent.empty:
     recent["alert_type"] = recent["alert_type"].map(type_label)
+    recent["timestamp"] = recent["timestamp"].astype(str).str[:19]
+    recent["anomaly_score"] = recent["anomaly_score"].astype(float).round(3)
     shown = recent[["timestamp", "server_id", "role", "alert_type", "probable_cause", "top_signals",
                     "suggested_check", "anomaly_score"]]
-    st.dataframe(shown.rename(columns=column_labels(shown.columns)), use_container_width=True, hide_index=True)
+    show_wrapped_table(shown.rename(columns=column_labels(shown.columns)))
 else:
     st.success(t("ok.no_anomalies"))
