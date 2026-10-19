@@ -141,6 +141,7 @@ def main():
     parser.add_argument("--anomaly-ratio", type=float, default=0.03, help="target ratio of True Anomaly rows")
     parser.add_argument("--error-ratio", type=float, default=0.015, help="target ratio of Data Error rows")
     parser.add_argument("--seed", type=int, default=42, help="random seed for reproducibility")
+    parser.add_argument("--start", type=str, default="2026-01-05", help="timestamp of the first reading (fixed for reproducible output)")
     parser.add_argument("--outfile", type=str, default="data/raw/metrics.csv", help="output file path")
     args = parser.parse_args()
 
@@ -153,7 +154,7 @@ def main():
 
     profiles = make_server_profiles(args.servers, rng)
 
-    start_time = datetime.now() - timedelta(days=args.days)
+    start_time = datetime.fromisoformat(args.start)
     timestamps = [start_time + timedelta(minutes=args.interval * i) for i in range(n_rows_per_server)]
     hours = np.array([t.hour for t in timestamps])
 

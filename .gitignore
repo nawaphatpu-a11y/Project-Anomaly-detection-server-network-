@@ -12,6 +12,8 @@ models/scale_params_retrained.json
 # ตอน container ใหม่ตื่น ไม่ต้องรอ bootstrap รัน pipeline ใหม่ทุกครั้ง:
 #   models/isolation_forest.joblib, data/processed/scale_params.json,
 #   data/processed/evaluation_report*.csv, data/processed/evaluation_scatter*.png,
+#   data/processed/replay_sample.csv, data/processed/recall_by_anomaly_type.csv,
+#   data/processed/cause_diagnosis_report.csv,
 #   independent_test_set_v2.csv
 # ถ้าแก้โมเดล/ข้อมูลแล้วต้อง commit ไฟล์พวกนี้ใหม่ด้วยเสมอ ไม่งั้นเว็บจะยังใช้ของเก่าอยู่
 
@@ -20,3 +22,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .streamlit/secrets.toml
+
+data/sweep/

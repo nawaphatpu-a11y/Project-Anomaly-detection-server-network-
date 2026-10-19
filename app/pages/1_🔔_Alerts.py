@@ -78,7 +78,7 @@ display = display.rename(columns=column_labels(table_columns))
 
 col_m, col_dl = st.columns([3, 1])
 with col_m:
-    st.metric(t("alerts.total"), len(alerts))
+    st.metric(t("alerts.total"), st.session_state["total_anomalies"])
 with col_dl:
     csv_bytes = display.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -86,10 +86,10 @@ with col_dl:
         data=csv_bytes,
         file_name=f"alerts_{pd.Timestamp.now():%Y%m%d_%H%M%S}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 
-st.dataframe(display, use_container_width=True, hide_index=True)
+st.dataframe(display, width="stretch", hide_index=True)
 
 st.subheader(t("details.title"))
 current = filtered.head(50).reset_index(drop=True)

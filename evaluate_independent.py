@@ -34,6 +34,25 @@ def apply_min_max(df: pd.DataFrame, cols: list, scale_info: dict) -> pd.DataFram
     return df
 
 
+def score_with_bundle(df: pd.DataFrame, bundle: dict, scale_info: dict):
+    df = df.copy()
+    if bundle.get("role_baselines"):
+        df = add_role_relative_features(df, bundle["role_baselines"])
+    df = apply_min_max(df, list(scale_info.keys()), scale_info)
+    X = df[bundle["feature_cols"]].fillna(0)
+    return (bundle["model"].predict(X) == -1).astype(int)
+
+
+def metrics_row(label: str, y_true, y_pred) -> dict:
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    return {
+        "dataset": label, "TP": tp, "FP": fp, "TN": tn, "FN": fn,
+        "precision": round(precision_score(y_true, y_pred, zero_division=0), 3),
+        "recall": round(recall_score(y_true, y_pred, zero_division=0), 3),
+        "f1": round(f1_score(y_true, y_pred, zero_division=0), 3),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate the saved model on an independently-generated test set")
     parser.add_argument("--infile", type=str, default="independent_test_set.csv")
@@ -59,30 +78,13 @@ def main():
     df = add_engineered_features(df)
     df = add_trend_feature(df, window=window)
     df = add_severity(df)
+    df["pred_isoforest"] = score_with_bundle(df, bundle, scale_info)
     if bundle.get("role_baselines"):
         df = add_role_relative_features(df, bundle["role_baselines"])
+    df = apply_min_max(df, list(scale_info.keys()), scale_info)
 
-    normalize_cols = list(scale_info.keys())
-    df = apply_min_max(df, normalize_cols, scale_info)
-
-    X = df[feature_cols].fillna(0)
-
-    pred = model.predict(X)
-    df["pred_isoforest"] = (pred == -1).astype(int)
-
-    y_true = df["is_anomaly"]
-    y_pred = df["pred_isoforest"]
-
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    report = pd.DataFrame([{
-        "dataset": "Independent test set (ChatGPT-generated)",
-        "TP": tp, "FP": fp, "TN": tn, "FN": fn,
-        "precision": round(precision, 3), "recall": round(recall, 3), "f1": round(f1, 3),
-    }]).set_index("dataset")
+    report = pd.DataFrame([metrics_row("Independent test set (ChatGPT-generated)",
+                                       df["is_anomaly"], df["pred_isoforest"])]).set_index("dataset")
 
     print(report.to_string())
 

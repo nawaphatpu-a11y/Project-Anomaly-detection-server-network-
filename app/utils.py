@@ -20,10 +20,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from diagnose import cause_title, decode_signals, diagnose, format_signals, suggested_check
 from etl import SEVERITY_MAP, ROLE_METRICS
 from i18n import get_lang, t
+from replay import ReplayFeed
 MODEL_PATH = "models/isolation_forest.joblib"
 SCALE_PARAMS_PATH = "data/processed/scale_params.json"
 BUFFER_MAX_ROWS = 3000
 HISTORY_PER_SERVER = 400
+REPLAY_PATH = "data/processed/replay_sample.csv"
 ANOMALY_INJECT_PROB = 0.04
 
 def _server_weight(server_id: str, server_ids: list) -> float:
@@ -153,9 +155,7 @@ def _role_z_features(reading: dict, baselines: dict | None) -> dict:
     return {f"{m}_role_z": (reading[m] - b[m]["median"]) / b[m]["mad"] for m in ROLE_METRICS}
 
 
-def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
-                        resp_history: deque, baselines: dict | None = None) -> pd.DataFrame:
-    """Build features exactly as etl.py does at training time, ordered by feature_cols."""
+def _feature_values(reading: dict, scale_params: dict, resp_history: deque, baselines: dict | None = None) -> dict:
     network_total = reading["network_in"] + reading["network_out"]
     cpu_memory_ratio = reading["cpu_usage"] / reading["memory_usage"] if reading["memory_usage"] else 0.0
 
@@ -167,7 +167,6 @@ def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
         roll_mean = float(np.mean(resp_history))
     else:
         roll_mean = reading["response_time"]
-    response_time_dev_from_roll = reading["response_time"] - roll_mean
 
     values = {
         "cpu_usage_norm": _minmax(reading["cpu_usage"], "cpu_usage", scale_params),
@@ -180,10 +179,10 @@ def _build_feature_row(reading: dict, scale_params: dict, feature_cols: list,
         "hour": hour,
         "day_of_week": day_of_week,
         "is_peak_hour": is_peak_hour,
-        "response_time_dev_from_roll": response_time_dev_from_roll,
+        "response_time_dev_from_roll": reading["response_time"] - roll_mean,
     }
     values.update(_role_z_features(reading, baselines))
-    return pd.DataFrame([[values[c] for c in feature_cols]], columns=feature_cols)
+    return values
 
 
 def init_buffer():
@@ -193,16 +192,42 @@ def init_buffer():
         st.session_state.alerts = pd.DataFrame()
     if "resp_history" not in st.session_state:
         st.session_state.resp_history = {}
+    for counter in ("total_readings", "total_anomalies", "round", "server_cursor"):
+        st.session_state.setdefault(counter, 0)
+    st.session_state.setdefault("replay_cursors", {})
+
+
+@st.cache_resource
+def load_replay_feed():
+    path = PROJECT_ROOT / REPLAY_PATH
+    return ReplayFeed(pd.read_csv(path)) if path.exists() else None
+
+
+def _replay_reading(feed: ReplayFeed, server_id: str, cursors: dict):
+    record, wrapped = feed.next_reading(server_id, cursors)
+    injected = record["anomaly_type"] if record["is_anomaly"] else None
+    reading = {
+        "timestamp": datetime.now(),
+        "server_id": server_id,
+        "cpu_usage": float(record["cpu_usage"]),
+        "memory_usage": float(record["memory_usage"]),
+        "network_in": float(record["network_in"]),
+        "network_out": float(record["network_out"]),
+        "response_time": float(record["response_time"]),
+        "_injected_type": injected,
+    }
+    return reading, wrapped
 
 
 def tick(n_new: int = 5):
-    """Called on every autorefresh: simulate n_new readings, score them and update the buffer."""
+    """Called on every autorefresh: take n_new readings, score them in one batch and update the buffer."""
     init_buffer()
     bundle, err = load_model_bundle()
     if err:
         st.error(err)
         st.stop()
     scale_params = load_scale_params()
+    feed = load_replay_feed()
 
     model = bundle["model"]
     feature_cols = bundle["feature_cols"]
@@ -211,25 +236,36 @@ def tick(n_new: int = 5):
     server_roles = bundle.get("server_roles", {})
     role_baselines = bundle.get("role_baselines")
 
-    new_rows = []
+    st.session_state["round"] += 1
+    readings, feature_values = [], []
     for _ in range(n_new):
-        server_id = random.choice(server_ids)
-        prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
+        server_id = server_ids[st.session_state["server_cursor"] % len(server_ids)]
+        st.session_state["server_cursor"] += 1
         role = server_roles.get(server_id, "Unknown")
-        reading = _simulate_raw_reading(server_id, prob, role, role_baselines)
+        hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
+
+        if feed is not None and feed.has(server_id):
+            reading, wrapped = _replay_reading(feed, server_id, st.session_state["replay_cursors"])
+            if wrapped:
+                hist.clear()
+        else:
+            prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
+            reading = _simulate_raw_reading(server_id, prob, role, role_baselines)
         reading["role"] = role
 
-        hist = st.session_state.resp_history.setdefault(server_id, deque(maxlen=window))
-        X = _build_feature_row(reading, scale_params, feature_cols, hist, role_baselines)
+        feature_values.append(_feature_values(reading, scale_params, hist, role_baselines))
+        hist.append(reading["response_time"])
+        readings.append(reading)
 
-        score = model.decision_function(X)[0]
-        pred = -1 if score < 0 else 1
+    X = pd.DataFrame([[values[c] for c in feature_cols] for values in feature_values], columns=feature_cols)
+    scores = model.decision_function(X)
 
-        reading["is_anomaly"] = int(pred == -1)
+    for reading, values, score in zip(readings, feature_values, scores):
+        reading["is_anomaly"] = int(score < 0)
         reading["anomaly_score"] = round(float(score), 4)
+        reading["round"] = st.session_state["round"]
         if reading["is_anomaly"]:
-            features = {**X.iloc[0].to_dict(), **_role_z_features(reading, role_baselines)}
-            diagnosis = diagnose(features, role=role)
+            diagnosis = diagnose(values, role=reading["role"])
             reading["alert_type"] = "Other" if diagnosis["cause_type"] == "UNCLASSIFIED" else diagnosis["cause_type"]
             reading["signals_raw"] = diagnosis["signals_raw"]
             reading["severity_level"] = SEVERITY_MAP.get(reading["alert_type"], "None")
@@ -239,10 +275,10 @@ def tick(n_new: int = 5):
             reading["severity_level"] = "None"
         reading.pop("_injected_type", None)
 
-        hist.append(reading["response_time"])
-        new_rows.append(reading)
+    new_df = pd.DataFrame(readings)
+    st.session_state["total_readings"] += len(new_df)
+    st.session_state["total_anomalies"] += int(new_df["is_anomaly"].sum())
 
-    new_df = pd.DataFrame(new_rows)
     combined = pd.concat([st.session_state.readings, new_df], ignore_index=True)
     st.session_state.readings = combined.groupby("server_id", group_keys=False).tail(HISTORY_PER_SERVER)
 
@@ -258,13 +294,23 @@ def localize_alerts(df, lang=None):
     out = df.copy()
     for column in ("probable_cause", "top_signals", "suggested_check"):
         out[column] = None
-    flagged = out.index[out["is_anomaly"] == 1]
-    for i in flagged:
-        row = out.loc[i]
-        cause_type = "UNCLASSIFIED" if row["alert_type"] == "Other" else row["alert_type"]
-        out.at[i, "probable_cause"] = cause_title(cause_type, lang)
-        out.at[i, "top_signals"] = format_signals(decode_signals(row.get("signals_raw")), lang)
-        out.at[i, "suggested_check"] = suggested_check(cause_type, row.get("role"), lang)
+    flagged = out["is_anomaly"] == 1
+    if not flagged.any():
+        return out
+
+    subset = out.loc[flagged]
+    causes = subset["alert_type"].where(subset["alert_type"] != "Other", "UNCLASSIFIED")
+    roles = subset["role"].fillna("") if "role" in subset else pd.Series("", index=subset.index)
+    raw_signals = subset["signals_raw"] if "signals_raw" in subset else pd.Series(None, index=subset.index)
+
+    titles = {c: cause_title(c, lang) for c in causes.unique()}
+    signal_text = {raw: format_signals(decode_signals(raw), lang) for raw in raw_signals.dropna().unique()}
+    empty_signals = format_signals([], lang)
+    checks = {(c, r): suggested_check(c, r, lang) for c, r in set(zip(causes, roles))}
+
+    out.loc[flagged, "probable_cause"] = causes.map(titles)
+    out.loc[flagged, "top_signals"] = raw_signals.map(signal_text).fillna(empty_signals)
+    out.loc[flagged, "suggested_check"] = [checks[(c, r)] for c, r in zip(causes, roles)]
     return out
 
 
@@ -289,6 +335,8 @@ def live_settings():
         st.session_state.readings = pd.DataFrame()
         st.session_state.alerts = pd.DataFrame()
         st.session_state.resp_history = {}
+        st.session_state["total_readings"] = 0
+        st.session_state["total_anomalies"] = 0
         for stale in ("alert_pool", "alert_pool_signature", "alert_pool_time", "saved_alert_choice"):
             st.session_state.pop(stale, None)
     return refresh, rows, paused

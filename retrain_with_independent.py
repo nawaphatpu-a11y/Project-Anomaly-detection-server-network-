@@ -12,11 +12,11 @@ import os
 import joblib
 import pandas as pd
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
 from etl import (fix_data_errors, fix_timestamp_errors, handle_missing, add_time_features,
                   add_engineered_features, add_trend_feature, add_severity,
                   compute_role_baselines, add_role_relative_features)
+from evaluate_independent import MODEL_PATH, SCALE_PARAMS_PATH, metrics_row, score_with_bundle
 from train_model import NORMALIZE_COLS, ISO_FEATURE_COLS, fit_min_max, apply_min_max, time_based_split
 
 
@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--contamination", type=float, default=0.03)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--model-out", type=str, default="models/isolation_forest_retrained.joblib")
-    parser.add_argument("--outfile", type=str, default="data/processed/evaluation_report_independent_after.csv")
+    parser.add_argument("--outfile", type=str, default="data/processed/evaluation_report_retrain_holdout.csv")
     args = parser.parse_args()
 
     print(f"Loading independent set: {args.independent_infile}")
@@ -50,6 +50,7 @@ def main():
     combined = pd.concat([original, seen], ignore_index=True)
     print(f"Combined training data: {len(combined):,} rows ({len(original):,} original + {len(seen):,} from independent set)")
 
+    holdout_raw = holdout.copy()
     scale_info = fit_min_max(combined, NORMALIZE_COLS)
     combined = apply_min_max(combined, NORMALIZE_COLS, scale_info)
     holdout = apply_min_max(holdout, NORMALIZE_COLS, scale_info)
@@ -67,16 +68,14 @@ def main():
     pred = (model.predict(X_holdout) == -1).astype(int)
     y_true = holdout["is_anomaly"]
 
-    tn, fp, fn, tp = confusion_matrix(y_true, pred, labels=[0, 1]).ravel()
-    precision = precision_score(y_true, pred, zero_division=0)
-    recall = recall_score(y_true, pred, zero_division=0)
-    f1 = f1_score(y_true, pred, zero_division=0)
-
-    report = pd.DataFrame([{
-        "dataset": "Independent holdout (after retrain with combined data)",
-        "TP": tp, "FP": fp, "TN": tn, "FN": fn,
-        "precision": round(precision, 3), "recall": round(recall, 3), "f1": round(f1, 3),
-    }]).set_index("dataset")
+    deployed = joblib.load(MODEL_PATH)
+    with open(SCALE_PARAMS_PATH, "r", encoding="utf-8") as f:
+        deployed_scale = json.load(f)
+    before_pred = score_with_bundle(holdout_raw, deployed, deployed_scale)
+    report = pd.DataFrame([
+        metrics_row("Before retrain (deployed model)", y_true, before_pred),
+        metrics_row("After retrain (original + first half of independent set)", y_true, pred),
+    ]).set_index("dataset")
     print(report.to_string())
 
     out_dir = os.path.dirname(args.outfile)

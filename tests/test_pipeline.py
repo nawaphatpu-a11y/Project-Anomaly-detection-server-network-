@@ -410,3 +410,46 @@ def test_history_filter_combines_conditions_and_tolerates_missing_signals():
     assert server_view.filter_history(df, types=["Other"], metrics=["cpu_usage"]).index.tolist() == [2]
     df.loc[1, "signals_raw"] = None
     assert server_view.filter_history(df, metrics=["memory_usage"]).index.tolist() == [0]
+
+
+def test_role_relative_features_are_not_model_inputs_but_remain_in_output_for_diagnosis():
+    for cols in (train_model.ISO_FEATURE_COLS, train_model.LOF_FEATURE_COLS,
+                 train_model.ZSCORE_FEATURE_COLS, train_model.IQR_FEATURE_COLS):
+        assert not set(train_model.ROLE_Z_COLS) & set(cols)
+    assert set(train_model.ROLE_Z_COLS) <= set(train_model.ALL_FEATURE_COLS)
+
+
+import replay
+
+
+def _replay_frame():
+    rows = []
+    for server in ("A", "B"):
+        for i in range(3):
+            rows.append({"server_id": server, "role": "Web Server", "cpu_usage": float(i), "memory_usage": 40.0,
+                         "network_in": 100.0, "network_out": 100.0, "response_time": 80.0,
+                         "is_anomaly": int(i == 2), "anomaly_type": "CPU_SPIKE" if i == 2 else "NONE"})
+    return pd.DataFrame(rows)
+
+
+def test_replay_feed_steps_in_order_per_server_and_wraps_around():
+    feed = replay.ReplayFeed(_replay_frame())
+    cursors = {}
+    seen = [feed.next_reading("A", cursors) for _ in range(4)]
+    assert [r["cpu_usage"] for r, _ in seen] == [0.0, 1.0, 2.0, 0.0]
+    assert [wrapped for _, wrapped in seen] == [False, False, False, True]
+    assert feed.next_reading("B", cursors)[0]["cpu_usage"] == 0.0
+    assert not feed.has("C")
+
+
+def test_replay_sample_keeps_the_earliest_rows_of_each_server_and_the_needed_columns():
+    rows = []
+    for server in ("A", "B"):
+        for i in range(10):
+            rows.append({"server_id": server, "role": "Web Server", "timestamp": pd.Timestamp("2026-01-01") + pd.Timedelta(minutes=i),
+                         "cpu_usage": float(i), "memory_usage": 40.0, "network_in": 1.0, "network_out": 1.0,
+                         "response_time": 80.0, "is_anomaly": 0, "anomaly_type": "NONE", "extra": 1})
+    sample = train_model.build_replay_sample(pd.DataFrame(rows).sample(frac=1, random_state=0), rows_per_server=4)
+    assert list(sample.columns) == train_model.REPLAY_COLUMNS
+    assert len(sample) == 8
+    assert sorted(sample[sample.server_id == "A"]["cpu_usage"]) == [0.0, 1.0, 2.0, 3.0]

@@ -33,9 +33,9 @@ TREND_COL_NORM = "response_time_dev_from_roll_norm"
 
 ROLE_Z_COLS = [f"{m}_role_z" for m in ROLE_METRICS]
 
-ISO_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW] + ROLE_Z_COLS
+ISO_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW]
 LOF_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_NORM]
-ZSCORE_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW] + ROLE_Z_COLS
+ZSCORE_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW]
 IQR_FEATURE_COLS = ZSCORE_FEATURE_COLS
 
 ALL_FEATURE_COLS = BASE_FEATURE_COLS + [TREND_COL_RAW, TREND_COL_NORM] + ROLE_Z_COLS
@@ -102,6 +102,15 @@ def iqr_baseline(X_train: pd.DataFrame, X_test: pd.DataFrame, k: float = 1.5) ->
     return ((X_test < lower) | (X_test > upper)).any(axis=1).astype(int)
 
 
+REPLAY_COLUMNS = ["server_id", "role", "cpu_usage", "memory_usage", "network_in", "network_out",
+                  "response_time", "is_anomaly", "anomaly_type"]
+
+
+def build_replay_sample(test_df: pd.DataFrame, rows_per_server: int = 400) -> pd.DataFrame:
+    parts = [group.sort_values("timestamp").head(rows_per_server) for _, group in test_df.groupby("server_id")]
+    return pd.concat(parts)[REPLAY_COLUMNS].reset_index(drop=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train anomaly detection models with a held-out test split")
     parser.add_argument("--infile", type=str, default="data/processed/metrics_clean.csv")
@@ -159,6 +168,12 @@ def main():
     test_df[keep_cols].to_csv(args.outfile, index=False)
 
     print(f"Saved predictions (test set only) -> {args.outfile}")
+
+    replay_path = os.path.join(out_dir or ".", "replay_sample.csv")
+    replay = build_replay_sample(test_df)
+    replay.to_csv(replay_path, index=False)
+    print(f"Saved replay sample for the live dashboard -> {replay_path} "
+          f"({len(replay):,} rows, {replay['is_anomaly'].mean():.1%} anomalies)")
     for col in ["pred_isoforest", "pred_lof", "pred_zscore", "pred_iqr"]:
         print(f"  {col}: flagged {int(test_df[col].sum()):,} rows as anomaly (out of {len(test_df):,} test rows)")
 

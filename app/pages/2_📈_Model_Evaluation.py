@@ -54,7 +54,7 @@ def alert_sentence(precision):
 
 eval_df = read("evaluation_report.csv")
 indep_before = read("evaluation_report_independent.csv")
-indep_after = read("evaluation_report_independent_after.csv")
+retrain_holdout = read("evaluation_report_retrain_holdout.csv")
 type_recall = read("recall_by_anomaly_type.csv")
 cause_report = read("cause_diagnosis_report.csv")
 
@@ -78,13 +78,13 @@ tab_models, tab_types, tab_indep = st.tabs([t("tab.models"), t("tab.types"), t("
 with tab_models:
     left, right = st.columns([3, 2])
     with left:
-        st.plotly_chart(metric_bars(eval_df, t("chart.metrics_by_model"), "model"), use_container_width=True)
+        st.plotly_chart(metric_bars(eval_df, t("chart.metrics_by_model"), "model"), width="stretch")
     with right:
         chosen = st.selectbox(t("select.confusion"), eval_df.index.tolist(),
                               index=eval_df.index.tolist().index(MAIN_MODEL))
-        st.plotly_chart(confusion_heatmap(eval_df.loc[chosen]), use_container_width=True)
+        st.plotly_chart(confusion_heatmap(eval_df.loc[chosen]), width="stretch")
         st.caption(alert_sentence(eval_df.loc[chosen, "precision"]))
-    st.dataframe(eval_df.style.format({m: "{:.3f}" for m in METRICS}), use_container_width=True)
+    st.dataframe(eval_df.style.format({m: "{:.3f}" for m in METRICS}), width="stretch")
     best = eval_df["f1"].idxmax()
     st.success(t("success.best", model=best, f1=f"{eval_df.loc[best, 'f1']:.3f}"))
 
@@ -98,7 +98,7 @@ with tab_types:
                      range_y=[0, 1], text_auto=".2f", title=t("types.chart_title"))
         fig.update_layout(xaxis_title="", legend_title_text="")
         fig.update_traces(textposition="outside")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         weakest = type_recall[MAIN_MODEL].idxmin()
         text = t("types.weakest", model=MAIN_MODEL, type=type_label(weakest),
                  recall=f"{type_recall.loc[weakest, MAIN_MODEL]:.2f}")
@@ -122,30 +122,35 @@ with tab_types:
                         y=[t("diag.actual", i=t("cm.act_normal") if i == "FALSE_ALARM" else type_label(i))
                            for i in counts.index])
         fig.update_layout(coloraxis_showscale=False, margin=dict(t=30, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption(t("diag.caption"))
 
 with tab_indep:
     if indep_before is None:
         st.info(t("indep.missing"))
     else:
-        rows = {t("indep.row_test"): main[METRICS], t("indep.row_before"): indep_before.iloc[0][METRICS]}
-        if indep_after is not None:
-            rows[t("indep.row_after")] = indep_after.iloc[0][METRICS]
+        first = indep_before.iloc[0]
+        rows = {t("indep.row_test"): main[METRICS], t("indep.row_full"): first[METRICS]}
         compare = pd.DataFrame(rows).T.astype(float)
         compare.index.name = "dataset"
 
         left, right = st.columns([3, 2])
         with left:
-            st.plotly_chart(metric_bars(compare, t("indep.chart_title"), ""), use_container_width=True)
+            st.plotly_chart(metric_bars(compare, t("indep.chart_title"), ""), width="stretch")
         with right:
-            first = indep_before.iloc[0]
-            st.plotly_chart(confusion_heatmap(first), use_container_width=True)
+            st.plotly_chart(confusion_heatmap(first), width="stretch")
             st.caption(alert_sentence(first["precision"]))
 
-        st.write(t("indep.summary", recall=f"{first['recall']:.2f}", precision=f"{first['precision']:.2f}"))
-        st.dataframe(pd.concat([indep_before, indep_after]) if indep_after is not None else indep_before,
-                     use_container_width=True)
+        st.write(t("indep.summary", recall=f"{first['recall']:.2f}", precision=f"{first['precision']:.2f}",
+                   test_recall=f"{main['recall']:.2f}", test_precision=f"{main['precision']:.2f}"))
+        st.dataframe(indep_before, width="stretch")
         scatter = PROCESSED / "evaluation_scatter_independent.png"
         if scatter.exists():
             st.image(str(scatter), caption=t("indep.scatter_caption"))
+
+        if retrain_holdout is not None:
+            st.subheader(t("indep.retrain_title"))
+            sample = retrain_holdout.iloc[0][["TP", "FP", "TN", "FN"]].sum()
+            st.caption(t("indep.retrain_note", n=f"{int(sample):,}"))
+            st.plotly_chart(metric_bars(retrain_holdout, t("indep.retrain_title"), ""), width="stretch")
+            st.dataframe(retrain_holdout, width="stretch")

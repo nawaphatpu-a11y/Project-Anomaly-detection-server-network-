@@ -49,7 +49,7 @@ shown["status"] = shown["status"].map(lambda s: f"{STATUS_ICON[s]} {t(f'status.{
 shown["last_seen"] = shown["last_seen"].astype(str).str[:19]
 shown = shown[["server_id", "role", "status", "alerts", "recent_alerts", "alert_rate",
                "cpu_usage", "memory_usage", "response_time", "last_seen"]]
-st.dataframe(shown.rename(columns=column_labels(shown.columns)), use_container_width=True, hide_index=True)
+st.dataframe(shown.rename(columns=column_labels(shown.columns)), width="stretch", hide_index=True)
 st.caption(t("servers.status_help"))
 
 status_of = dict(zip(table["server_id"], table["status"]))
@@ -113,7 +113,7 @@ flagged = srv[srv["is_anomaly"] == 1]
 if not flagged.empty:
     fig.add_scatter(x=flagged["timestamp"], y=flagged[metric], mode="markers",
                     marker=dict(color="#E45756", size=9), name=t("label.anomaly"))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
 if band:
     st.caption(t("servers.band"))
 
@@ -158,4 +158,4 @@ peers["selected"] = (peers["server_id"] == server).map({True: server, False: "â€
 fig = px.box(peers, x="server_id", y=metric, color="selected",
              labels={"server_id": t("col.server_id"), metric: t(f"col.{metric}"), "selected": ""},
              color_discrete_map={server: "#E45756", "â€”": "#4C78A8"})
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")

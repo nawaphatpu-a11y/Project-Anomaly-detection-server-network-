@@ -29,8 +29,8 @@ if df.empty:
     st.info(t("home.waiting"))
     st.stop()
 
-total_readings = len(df)
-total_anomalies = int(df["is_anomaly"].sum())
+total_readings = st.session_state["total_readings"]
+total_anomalies = st.session_state["total_anomalies"]
 health_score = 100 * (1 - total_anomalies / total_readings) if total_readings else 100
 servers_online = df["server_id"].nunique()
 
@@ -41,23 +41,26 @@ c3.metric(t("metric.servers"), f"{servers_online}")
 
 st.divider()
 
+TREND_ROUNDS = 200
+recent_rounds = df[df["round"] > df["round"].max() - TREND_ROUNDS]
+
 col_a, col_b = st.columns(2)
 with col_a:
     st.subheader(t("chart.trend"))
-    trend = df.groupby(df.index // max(1, rows_per_tick)).agg(
+    trend = recent_rounds.groupby("round").agg(
         CPU=("cpu_usage", "mean"),
         Memory=("memory_usage", "mean"),
     ).reset_index()
-    fig = px.line(trend, x="index", y=["CPU", "Memory"],
-                  labels={"value": t("label.percent"), "index": t("label.round"), "variable": t("label.metric")})
-    st.plotly_chart(fig, use_container_width=True)
+    fig = px.line(trend, x="round", y=["CPU", "Memory"],
+                  labels={"value": t("label.percent"), "round": t("label.round"), "variable": t("label.metric")})
+    st.plotly_chart(fig, width="stretch")
 
 with col_b:
     st.subheader(t("chart.anomaly_trend"))
-    anomaly_trend = df.groupby(df.index // max(1, rows_per_tick))["is_anomaly"].sum().reset_index()
-    fig = px.line(anomaly_trend, x="index", y="is_anomaly",
-                  labels={"index": t("label.round"), "is_anomaly": t("label.anomaly_count")})
-    st.plotly_chart(fig, use_container_width=True)
+    anomaly_trend = recent_rounds.groupby("round")["is_anomaly"].sum().reset_index()
+    fig = px.line(anomaly_trend, x="round", y="is_anomaly",
+                  labels={"round": t("label.round"), "is_anomaly": t("label.anomaly_count")})
+    st.plotly_chart(fig, width="stretch")
 
 col_c, col_d = st.columns(2)
 with col_c:
@@ -68,7 +71,7 @@ with col_c:
         fig = px.bar(by_server, x="server_id", y="count", text="count",
                      labels={"server_id": t("col.server_id"), "count": t("label.anomaly_count")})
         fig.update_traces(textposition="outside")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info(t("empty.by_server"))
 
@@ -84,7 +87,7 @@ with col_d:
         fig = px.bar(by_type, x="alert_type", y="count", text="count",
                      labels={"alert_type": t("col.alert_type"), "count": t("label.anomaly_count")})
         fig.update_traces(textposition="outside")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.info(t("empty.by_type"))
     st.caption(t("caption.other", n=other_count))
@@ -97,12 +100,12 @@ with col_e:
                      color=df["is_anomaly"].map({0: normal_label, 1: anomaly_label}),
                      color_discrete_map={normal_label: "#4C78A8", anomaly_label: "#E45756"},
                      labels={"cpu_usage": t("col.cpu_usage"), "response_time": t("col.response_time"), "color": ""})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 with col_f:
     st.subheader(t("chart.network"))
     fig = px.box(df, y="network_in", points="outliers", labels={"network_in": t("col.network_in")})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 if "role" in df.columns:
     col_g, col_h = st.columns(2)
@@ -110,12 +113,12 @@ if "role" in df.columns:
         st.subheader(t("chart.cpu_role"))
         st.plotly_chart(px.box(df, x="role", y="cpu_usage", color="role",
                                labels={"role": t("col.role"), "cpu_usage": t("col.cpu_usage")}),
-                        use_container_width=True)
+                        width="stretch")
     with col_h:
         st.subheader(t("chart.memory_role"))
         st.plotly_chart(px.box(df, x="role", y="memory_usage", color="role",
                                labels={"role": t("col.role"), "memory_usage": t("col.memory_usage")}),
-                        use_container_width=True)
+                        width="stretch")
 
     role_summary = (
         df.groupby("role")
@@ -128,7 +131,7 @@ if "role" in df.columns:
     role_summary.index.name = "role"
     st.subheader(t("section.role_summary"))
     st.dataframe(role_summary.rename(columns=column_labels(role_summary.columns)).rename_axis(t("col.role")),
-                 use_container_width=True)
+                 width="stretch")
 
 st.subheader(t("section.latest"))
 recent = localize_alerts(df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10))

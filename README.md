@@ -14,44 +14,54 @@ pip install -r requirements.txt
 ```bash
 python generate_data.py          # -> data/raw/metrics.csv
 python etl.py                    # -> data/processed/metrics_clean.csv
-python train_model.py            # -> predictions.csv, models/isolation_forest.joblib, scale_params.json
-python evaluate.py               # -> data/processed/evaluation_report.csv + evaluation_scatter.png
+python train_model.py            # -> predictions.csv, models/isolation_forest.joblib, scale_params.json, replay_sample.csv
+python evaluate.py               # -> evaluation_report.csv, recall_by_anomaly_type.csv, cause_diagnosis_report.csv, evaluation_scatter.png
 ```
 
-`train_model.py` แบ่ง train/test ตามเวลา (fit min-max/mean-std จาก train เท่านั้นตอน
-ประเมินผล กัน data leakage) แล้วเทรน Isolation Forest ตัวสุดท้ายจากข้อมูล**ทั้งหมด**
-แยกอีกรอบสำหรับ deploy จริง benchmark เทียบ 4 วิธี: Isolation Forest, LOF, Z-score, IQR
+`generate_data.py` ใช้ `--seed` และ `--start` (ค่าเริ่มต้น 2026-01-05) ตรึงไว้ ผลจึงซ้ำได้ทุกครั้งที่รัน
+
+`train_model.py` แบ่ง train/test ตามเวลาแยกทีละ server (fit min-max และ baseline จาก train เท่านั้นตอนประเมินผล)
+แล้วเทรน Isolation Forest ตัวสุดท้ายจากข้อมูล**ทั้งหมด**แยกอีกรอบสำหรับ deploy จริง benchmark เทียบ 4 วิธี:
+Isolation Forest, LOF, Z-score, IQR ทุกวิธีใช้ชุดฟีเจอร์เดียวกัน (ยกเว้น LOF ที่ใช้ trend แบบ normalize)
 
 **ไฟล์ที่ commit ไว้ใน repo แล้ว (ไม่ต้องรันก็เปิด dashboard ได้ทันที):**
-`models/isolation_forest.joblib`, `data/processed/scale_params.json`,
-`data/processed/evaluation_report*.csv`, `data/processed/evaluation_scatter*.png`,
-`independent_test_set_v2.csv` — dashboard จึงข้ามขั้น bootstrap ตอน container ตื่น
-(ลดเวลารอ) ส่วนข้อมูลดิบ/ไฟล์ขั้นกลางขนาดใหญ่ถูก `.gitignore` ไว้ สร้างใหม่ได้ด้วยคำสั่งข้างบน
+`models/isolation_forest.joblib`, `data/processed/scale_params.json`, `data/processed/replay_sample.csv`,
+`data/processed/evaluation_report*.csv`, `recall_by_anomaly_type.csv`, `cause_diagnosis_report.csv`,
+`robustness_sweep.csv`, `evaluation_scatter*.png`, `independent_test_set_v2.csv`
+ส่วนข้อมูลดิบ/ไฟล์ขั้นกลางขนาดใหญ่ถูก `.gitignore` ไว้ สร้างใหม่ได้ด้วยคำสั่งข้างบน
 **ถ้าแก้โมเดล/ข้อมูลแล้ว ต้อง commit ไฟล์พวกนี้ใหม่ด้วย** ไม่งั้นเว็บยังใช้ของเก่าอยู่
 
-### Role baseline (แต่ละ role มีนิสัยต่างกัน)
+### Role baseline และ role_z
 
-`generate_data.py` ให้แต่ละ role มีค่าปกติต่างกันตามธรรมชาติ (Web = network หนัก/CPU-memory เบา,
-Database = memory สูง/response ช้ากว่า, App = CPU สูงสุด) แทนที่จะสุ่มจากช่วงเดียวกัน ทำให้กราฟ
-box plot แยก role ใน dashboard เห็นความต่างจริง และ `etl.py` เพิ่ม feature `*_role_z` (ห่างจากค่ากลางของ
-role ตัวเองกี่ MAD) ที่ fit จาก train เท่านั้น เก็บไว้ในไฟล์โมเดล (`role_baselines`) ให้ dashboard คำนวณตรงกับตอนเทรน
-และจำลองข้อมูล live ตาม baseline ของแต่ละ role (ผลทดสอบเฉลี่ย 3 seed: F1 ของ Isolation Forest ~0.88 -> ~0.91;
-ส่วน one-hot ของ role เฉยๆ ไม่ช่วย). ชุดข้อมูลอิสระ precision ยังต่ำ (~0.05) -- feature นี้แก้ covariate shift ไม่ได้
+แต่ละ role มีค่าปกติต่างกัน (Web = network หนัก/CPU-memory เบา, Database = memory สูง/response ช้ากว่า,
+App = CPU สูงสุด) `etl.py` คำนวณ `*_role_z` = ห่างจากค่ามัธยฐานของ role ตัวเองกี่ MAD โดย fit จาก train เท่านั้น
+และเก็บ baseline ไว้ในไฟล์โมเดล (`role_baselines`)
+
+**`role_z` ใช้วินิจฉัยสาเหตุเท่านั้น ไม่ใช่ input ของโมเดล** เพราะวัดผลแล้วว่าทำให้โมเดลใช้กับข้อมูลจากแหล่งอื่นไม่ได้
+(ผลเฉลี่ย 5 seed ใน `data/processed/robustness_sweep.csv`):
+
+| Isolation Forest | F1 บน test split | F1 บนชุดอิสระ | precision บนชุดอิสระ |
+|---|---|---|---|
+| ไม่มี role_z (ใช้อยู่) | 0.860 | 0.719 (0.418–0.865) | 0.670 |
+| มี role_z | 0.905 | 0.096 (0.086–0.108) | 0.051 |
+
+role_z ให้ F1 ในข้อมูลชุดเดียวกันดีขึ้นเล็กน้อย แต่ baseline ของ role ใน generator ต่างจากข้อมูลแหล่งอื่นนิดเดียว
+ค่านี้ก็พุ่งทุกแถวและโมเดล flag เกือบทั้งหมด
 
 ### Probable-cause diagnosis
 
 `diagnose.py` turns each flagged reading into a hypothesis: a probable cause (runaway process / traffic surge / gradual slowdown),
-the strongest signals (deviation from the server role's normal, in MAD) and a role-specific first thing to check. It is rule-based on
-the `*_role_z` features, so every conclusion can be traced back to numbers. The dashboard shows it in the Alerts page and the
-latest-anomalies table, and `evaluate.py` writes `cause_diagnosis_report.csv`: on rows flagged by the Isolation Forest the diagnosed
-cause matches the injected type 100% for CPU_SPIKE and NETWORK_SURGE and about 93% for RESPONSE_DEGRADATION, and about 65% of false
-alarms are left unclassified. The rules were written around the simulated patterns, so these figures are optimistic for real systems.
+the strongest signals (distance from the server role's normal, in MAD) and a role-specific first thing to check. It is rule-based on
+the `*_role_z` values, so every conclusion can be traced back to numbers. `evaluate.py` writes `cause_diagnosis_report.csv`:
+on readings flagged by the Isolation Forest the diagnosed cause matches the injected type 100% for CPU_SPIKE and NETWORK_SURGE
+and about 93% for RESPONSE_DEGRADATION, and about 84% of false alarms are left unclassified. The rules were written around the
+simulated patterns, so these figures are optimistic for real systems.
 
 ### Language switch (EN / TH)
 
-The dashboard sidebar has an EN / TH toggle. All UI text lives in `app/i18n.py` (one dictionary per language) and the diagnosis
-texts in `diagnose.py`. Alerts store language-neutral data (type code and raw signals) and the text is built at display time, so
-switching language re-renders existing alerts too. A test checks that both dictionaries have the same keys and placeholders.
+The dashboard sidebar has an EN / TH toggle. All UI text lives in `app/i18n.py` and the diagnosis texts in `diagnose.py`.
+Alerts store language-neutral data (type code and raw signals) and the text is built at display time. A test checks that
+both dictionaries have the same keys and placeholders.
 
 ## 3) ประเมินผลกับชุดข้อมูลอิสระ (Step 5 เสริม — สร้างจาก AI คนละตัว)
 
@@ -59,12 +69,21 @@ switching language re-renders existing alerts too. A test checks that both dicti
 python Generate_data_AI.py                                    # -> independent_test_set_v2.csv
 python evaluate_independent.py --infile independent_test_set_v2.csv
 python retrain_with_independent.py --independent-infile independent_test_set_v2.csv   # ทดลอง retrain
+python scripts/robustness_sweep.py                             # ทดสอบความทนทานข้ามหลาย seed
 ```
 
-ข้อสังเกตสำคัญที่เจอจริง: precision ร่วงจาก ~0.88 เหลือ ~0.05 บนชุดข้อมูลอิสระ ทั้งที่
-recall ยังสูง (~0.94) เพราะ baseline ของข้อมูล "ปกติ" ต่างจากที่โมเดลเคยเห็น (covariate
-shift) และการ retrain ด้วยข้อมูลผสมแบบตรงไปตรงมาแทบไม่ช่วย (ข้อมูลใหม่เป็นแค่ ~3.9% ของ
-training set) — `retrain_with_independent.py` เซฟโมเดลใหม่แยกไว้ ไม่ทับโมเดล deploy
+ผลที่ควรรายงานตามจริง:
+
+1. **ชุดอิสระเล็ก** (2 วัน, 7,000 แถว, 218 anomaly) และสร้างโดย AI อีกตัว จึงเป็นหลักฐานเบื้องต้น ไม่ใช่ข้อสรุปขาด
+2. **ผลบนชุดอิสระแกว่งมากตามชุดเทรนที่สร้างขึ้นใหม่:** ทดสอบ 5 seed ได้ F1 ของ Isolation Forest ระหว่าง 0.418–0.865
+   (เฉลี่ย 0.719) precision แกว่งตั้งแต่ 0.27 ถึง 0.91 ขณะที่ recall นิ่ง (0.83–0.91) เหตุผลที่เป็นไปได้: เกณฑ์ตัดสินของ
+   Isolation Forest ถูกตั้งจากสัดส่วน `contamination` ของข้อมูลเทรน พอข้อมูลปกติของแหล่งอื่นอยู่ใกล้ขอบเกณฑ์ ตัวเลขจึงขยับง่าย
+3. **Z-score ทำได้ดีและนิ่งกว่า Isolation Forest บนชุดอิสระ:** F1 เฉลี่ย 0.857 (0.686–0.915) เทียบ 0.719 และบน test split
+   สองวิธีใกล้เคียงกัน (0.846 กับ 0.860) ดังนั้นข้อมูลชุดนี้ยังไม่ได้พิสูจน์ว่า Isolation Forest เหนือกว่า baseline อย่างง่าย
+   ซึ่งสอดคล้องกับธรรมชาติของข้อมูลจำลองที่ anomaly เป็นค่าพุ่งชัดเจน ควรเขียนเป็นข้อจำกัดและข้อเสนอแนะในรายงาน
+4. **การ retrain วัดเทียบบนชุดแถวเดียวกัน** (`evaluation_report_retrain_holdout.csv`): โมเดลเดิมและโมเดลที่ retrain ถูกวัดบนครึ่งหลัง
+   ของชุดอิสระเหมือนกัน (3,504 แถว) ได้ F1 0.294 → 0.447 ในการรันนี้ (รันเดียว ยังไม่ได้ทดสอบข้ามหลาย seed)
+   `retrain_with_independent.py` เซฟโมเดลใหม่แยกไว้ ไม่ทับโมเดล deploy
 
 ## 4) เปิด live dashboard
 
@@ -72,11 +91,15 @@ training set) — `retrain_with_independent.py` เซฟโมเดลให�
 streamlit run app/Home.py
 ```
 
-รันจาก root ของโปรเจกต์เท่านั้น มี 3 หน้าใน sidebar: **Home** (dashboard), **🔔 Alerts**
-(หน้าแจ้งเตือน เรียงตามความรุนแรง กรองได้ ดาวน์โหลด CSV ได้) และ **📈 Model Evaluation**
-(ผลประเมินโมเดล) ข้อมูล live เป็นข้อมูลจำลอง สคอร์ด้วย Isolation Forest ตัวเดียวกับที่ประเมินผลไว้
+รันจาก root ของโปรเจกต์เท่านั้น มี 4 หน้าใน sidebar: **Home** (ภาพรวม), **Alerts** (กรอง ดาวน์โหลด CSV ดูสาเหตุที่เป็นไปได้),
+**Model Evaluation** (ผลประเมินโมเดล) และ **Servers** (ภาพรวมทุกเครื่องและรายละเอียดรายเครื่อง)
 
-ถ้าไม่มีไฟล์โมเดล แอปจะรัน pipeline offline ให้เองตอนเปิดครั้งแรก (กันพังตอน deploy ใหม่)
+ข้อมูล live เป็นการ **replay** ข้อมูลจำลองที่บันทึกไว้ (`data/processed/replay_sample.csv` ซึ่งตัดมาจากส่วน test split)
+เข้าโมเดลทีละเครื่องตามลำดับเวลา ไม่ใช่การสุ่มค่าใหม่ จึงมีการกระจายของข้อมูลเหมือนที่โมเดลเรียนรู้ ในการทดสอบ false alarm
+อยู่ราว 2% และจับ anomaly ที่ฝังไว้ได้ราว 96% (ตัวจำลองสุ่มแบบเดิมได้ false alarm 5–10%) โมเดลที่ deploy ถูกเทรนจากข้อมูลทั้งหมด
+ซึ่งรวมช่วงที่ replay ด้วย ผลบนหน้านี้จึงใช้สาธิตการทำงานของระบบ ไม่ใช่หลักฐานการประเมินผล
+
+ถ้าไม่มีไฟล์โมเดล แอปจะรัน pipeline offline ให้เองตอนเปิดครั้งแรก และถ้าไม่มี `replay_sample.csv` จะสลับไปใช้ตัวจำลองแบบสุ่ม
 
 ## 5) Deploy + กันแอปหลับ (Streamlit Community Cloud)
 
@@ -89,6 +112,8 @@ Streamlit พักแอปฟรีเองหลังไม่มี traffi
    ทุก 4 ชม. และกดปุ่มปลุกให้ถ้าแอปหลับ (HTTP ping ธรรมดาใช้ไม่ได้ผล) — กดรันเองได้ที่
    แท็บ Actions → Streamlit Keepalive → Run workflow
 
+`requirements.txt` กำหนด `streamlit>=1.51` เพราะโค้ดใช้ `width="stretch"` แทน `use_container_width` ที่ถูกประกาศเลิกใช้แล้ว
+
 ## 6) รันเทสต์
 
 ```bash
@@ -96,3 +121,21 @@ pytest tests/ -v
 ```
 
 มี GitHub Actions (`.github/workflows/tests.yml`) รันเทสต์ชุดนี้อัตโนมัติทุกครั้งที่ push
+
+## 7) เหตุผลของการออกแบบ (Design decisions)
+
+- **แบ่ง train/test ตามเวลา แยกทีละ server:** anomaly ถูกแทรกเป็นช่วงต่อเนื่อง 6–20 แถว การสุ่มแบ่งแถวจะทำให้แถวของเหตุการณ์เดียวกัน
+  ไปอยู่ทั้ง train และ test (data leakage) ผลวัดจึงดีเกินจริง
+- **fit ตัวปรับสเกลและ baseline จาก train เท่านั้น** (min-max, mean/std, median/MAD) ไม่ใช้ข้อมูล test ช่วยตั้งเกณฑ์ตัวเอง
+- **Data Error กับ True Anomaly แยกกัน:** ค่าที่เป็นไปไม่ได้ (CPU > 100, ค่าติดลบ) เป็นความผิดพลาดของระบบเก็บข้อมูล ETL แทนด้วย NaN แล้วเติมด้วย
+  forward-fill ต่อ server ส่วน True Anomaly (`is_anomaly = 1`) ห้ามลบ เพราะเป็นสิ่งที่ใช้ประเมินผล
+- **ไม่ normalize `hour` และ `day_of_week`:** เคยทดสอบ normalize แล้ว F1 ของ LOF ลดจาก 0.605 เหลือ 0.304 เพราะ `hour` ที่มี scale ใหญ่ช่วยจัดกลุ่มเพื่อนบ้านตามช่วงเวลา
+- **ฟีเจอร์ trend (`response_time_dev_from_roll`, หน้าต่าง 12 จุด):** anomaly แบบ RESPONSE_DEGRADATION ค่อยๆ ไต่ขึ้น ฟีเจอร์ที่ดูค่าทีละจุดมองไม่เห็นช่วงต้นของเหตุการณ์
+  recall ของประเภทนี้จึงต่ำกว่า CPU_SPIKE/NETWORK_SURGE ในทุกโมเดล
+- **`contamination = 0.03`** ตั้งตามสัดส่วน anomaly ที่ฝังไว้ ในระบบจริงไม่ทราบค่านี้ จึงเป็นสมมติฐานที่ต้องปรับตามสภาพแวดล้อม
+- **median/MAD สำหรับ role baseline** ทนต่อ anomaly ที่ปนอยู่ในข้อมูล (~3%) ได้ดีกว่า mean/std
+- **ไม่ใช้ `role_z` เป็น input ของโมเดล** ดูหัวข้อ role_z ด้านบน
+- **ให้คะแนนแบบ batch:** dashboard ให้คะแนนทุก reading ของแต่ละรอบในการเรียกโมเดลครั้งเดียว (เดิมเรียกทีละแถว ช้ากว่าราว 19 เท่าเมื่อวัด 20 แถว)
+- **รายการ dropdown ต้องคงที่:** Streamlit ถือว่า dropdown ที่ตัวเลือกหรือข้อความของตัวเลือกเปลี่ยนเป็น widget ตัวใหม่ แล้วรีเซ็ตค่าที่เลือก
+  จึงไม่ใส่สถานะสดในข้อความของตัวเลือก และเก็บค่าที่เลือกไว้ใน session แยกต่างหาก
+- **ผลลัพธ์ทั้งหมดอิงข้อมูลจำลอง:** label มาจาก generator ที่เราเขียนเอง ผลจึงบอกว่าโมเดลจับรูปแบบที่ตั้งใจฝังได้ไหม ไม่ได้พิสูจน์ประสิทธิภาพบนระบบจริง
