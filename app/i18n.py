@@ -358,23 +358,19 @@ def t(key, lang=None, **kwargs):
 def language_selector():
     """Sidebar language switch that survives page navigation.
 
-    Streamlit deletes the session_state entry of a widget when that widget is
-    not rendered in the current script run (which happens on a page switch in
-    a multipage app). So the radio must NOT own the "lang" key. We keep the
-    real language in "lang" (a plain value, never deleted) and let the radio
-    use its own throw-away key, copying the choice back via on_change.
+    The language lives in a plain session_state value ("lang"). The radio has
+    NO key, so Streamlit has no widget-state entry to clean up when the page
+    changes. Its starting position is taken from "lang" via `index`, and the
+    user's choice is written straight back every run.
     """
     import streamlit as st
     if st.session_state.get("lang") not in LANGS:
         st.session_state["lang"] = "EN"
 
-    def _save_choice():
-        st.session_state["lang"] = st.session_state["lang_widget"]
-
-    # Re-seed the widget from the persistent value on every run/page.
-    st.session_state["lang_widget"] = st.session_state["lang"]
-    st.sidebar.radio(t("lang.label"), LANGS, key="lang_widget",
-                     horizontal=True, on_change=_save_choice)
+    choice = st.sidebar.radio(t("lang.label"), LANGS,
+                              index=LANGS.index(st.session_state["lang"]),
+                              horizontal=True)
+    st.session_state["lang"] = choice
 
 
 def type_label(code, lang=None):
