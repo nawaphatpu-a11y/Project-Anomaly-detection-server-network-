@@ -1,0 +1,3 @@
+config,contamination,n_estimators,max_samples,test_precision,test_recall,test_f1,independent_precision,independent_recall,independent_f1
+default,0.03,200,auto,0.843,0.91,0.876,0.272,0.908,0.418
+tuned,0.03,200,512,0.863,0.941,0.901,0.559,0.89,0.687

@@ -36,7 +36,7 @@ TEXT = {
         "chart.cpu_role": "CPU Distribution by Role",
         "chart.memory_role": "Memory Distribution by Role",
         "section.role_summary": "Summary by Role",
-        "section.latest": "Latest 10 Anomalies",
+        "section.latest": "Latest 10 Incidents",
         "ok.no_anomalies": "No anomalies in this session yet ✅",
         "alerts.title": "🔔 Alert Log",
         "alerts.none": "No alerts yet. Everything looks normal ✅",
@@ -170,6 +170,35 @@ TEXT = {
         "indep.row_full": "Independent set (full)",
         "indep.retrain_title": "Retrain experiment, scored on the same holdout",
         "indep.retrain_note": "Both models are scored on the same {n} held-out rows from the independent set.",
+        "alerts.incidents": "Incidents",
+        "alerts.readings": "Flagged readings (session)",
+        "alerts.readings_title": "Individual flagged readings",
+        "filter.detection": "Filter by confidence",
+        "filter.detection_help": "High confidence: both methods agree. One metric extreme: only the Z-score method flags it. Unusual pattern: only the Isolation Forest flags it.",
+        "detection.both": "High confidence (both methods agree)",
+        "detection.zscore": "One metric clearly extreme (Z-score)",
+        "detection.forest": "Unusual pattern or timing (Isolation Forest)",
+        "col.detection": "Confidence",
+        "col.incident": "Incident",
+        "col.start": "Start",
+        "col.end": "End",
+        "status.ongoing": "Ongoing",
+        "status.ended": "Ended",
+        "details.detected_by": "Detected by",
+        "details.span": "{readings} flagged readings, from {start} to {end}",
+        "feedback.title": "Was this a real issue?",
+        "feedback.confirm": "Real issue",
+        "feedback.false": "False alarm",
+        "feedback.v_confirmed": "real issue",
+        "feedback.v_false": "false alarm",
+        "feedback.saved": "Your answer: {verdict}",
+        "feedback.summary": "Feedback so far, by confidence level",
+        "feedback.col_real": "Real issues",
+        "feedback.col_false": "False alarms",
+        "feedback.col_share": "Share real",
+        "feedback.none": "No feedback yet. Answer above to see how reliable each confidence level is.",
+        "metric.incidents": "Recent incidents",
+        "metric.incidents_help": "Flagged readings close together on the same server count as one incident. Counted from the most recent flagged readings kept in memory.",
     },
     "th": {
         "lang.label": "Language / ภาษา",
@@ -206,7 +235,7 @@ TEXT = {
         "chart.cpu_role": "การกระจายของ CPU แยกตาม Role",
         "chart.memory_role": "การกระจายของ Memory แยกตาม Role",
         "section.role_summary": "สรุปตาม Role",
-        "section.latest": "10 เหตุการณ์ผิดปกติล่าสุด",
+        "section.latest": "10 เหตุการณ์ล่าสุด",
         "ok.no_anomalies": "ยังไม่พบเหตุการณ์ผิดปกติในเซสชันนี้ ✅",
         "alerts.title": "🔔 บันทึกการแจ้งเตือน",
         "alerts.none": "ยังไม่มีการแจ้งเตือน ทุกอย่างปกติ ✅",
@@ -340,6 +369,35 @@ TEXT = {
         "indep.row_full": "ชุดอิสระ (ทั้งชุด)",
         "indep.retrain_title": "ทดลอง retrain วัดบนชุดทดสอบส่วนเดียวกัน",
         "indep.retrain_note": "โมเดลทั้งสองถูกวัดบนข้อมูลชุดเดียวกัน {n} แถว ซึ่งเป็นส่วนที่กันไว้จากชุดอิสระ",
+        "alerts.incidents": "เหตุการณ์",
+        "alerts.readings": "ข้อมูลที่ถูกตรวจพบ (เซสชันนี้)",
+        "alerts.readings_title": "ข้อมูลที่ถูกตรวจพบทีละรายการ",
+        "filter.detection": "กรองตามความมั่นใจ",
+        "filter.detection_help": "มั่นใจสูง: ทั้งสองวิธีเห็นตรงกัน ค่าใดค่าหนึ่งผิดปกติชัดเจน: เฉพาะ Z-score ตรวจพบ รูปแบบผิดปกติ: เฉพาะ Isolation Forest ตรวจพบ",
+        "detection.both": "มั่นใจสูง (ทั้งสองวิธีเห็นตรงกัน)",
+        "detection.zscore": "ค่าใดค่าหนึ่งผิดปกติชัดเจน (Z-score)",
+        "detection.forest": "รูปแบบหรือช่วงเวลาผิดปกติ (Isolation Forest)",
+        "col.detection": "ความมั่นใจ",
+        "col.incident": "เหตุการณ์",
+        "col.start": "เริ่ม",
+        "col.end": "สิ้นสุด",
+        "status.ongoing": "กำลังเกิดอยู่",
+        "status.ended": "สิ้นสุดแล้ว",
+        "details.detected_by": "ตรวจพบโดย",
+        "details.span": "{readings} รายการ ตั้งแต่ {start} ถึง {end}",
+        "feedback.title": "เหตุการณ์นี้เป็นปัญหาจริงไหม",
+        "feedback.confirm": "เป็นปัญหาจริง",
+        "feedback.false": "เตือนผิด",
+        "feedback.v_confirmed": "เป็นปัญหาจริง",
+        "feedback.v_false": "เตือนผิด",
+        "feedback.saved": "คำตอบของคุณ: {verdict}",
+        "feedback.summary": "ผลป้อนกลับถึงตอนนี้ แยกตามระดับความมั่นใจ",
+        "feedback.col_real": "ปัญหาจริง",
+        "feedback.col_false": "เตือนผิด",
+        "feedback.col_share": "สัดส่วนที่เป็นจริง",
+        "feedback.none": "ยังไม่มีผลป้อนกลับ ตอบด้านบนเพื่อดูว่าแต่ละระดับความมั่นใจน่าเชื่อถือแค่ไหน",
+        "metric.incidents": "เหตุการณ์ล่าสุด",
+        "metric.incidents_help": "ข้อมูลที่ถูกตรวจพบติดๆ กันบนเซิร์ฟเวอร์เดียวกันนับเป็น 1 เหตุการณ์ นับจากข้อมูลที่ถูกตรวจพบล่าสุดที่เก็บไว้ในหน่วยความจำ",
     },
 }
 
@@ -356,21 +414,10 @@ def t(key, lang=None, **kwargs):
 
 
 def language_selector():
-    """Sidebar language switch that survives page navigation.
-
-    The language lives in a plain session_state value ("lang"). The radio has
-    NO key, so Streamlit has no widget-state entry to clean up when the page
-    changes. Its starting position is taken from "lang" via `index`, and the
-    user's choice is written straight back every run.
-    """
     import streamlit as st
-    if st.session_state.get("lang") not in LANGS:
+    if "lang" not in st.session_state:
         st.session_state["lang"] = "EN"
-
-    choice = st.sidebar.radio(t("lang.label"), LANGS,
-                              index=LANGS.index(st.session_state["lang"]),
-                              horizontal=True)
-    st.session_state["lang"] = choice
+    st.sidebar.radio(t("lang.label"), LANGS, key="lang", horizontal=True)
 
 
 def type_label(code, lang=None):

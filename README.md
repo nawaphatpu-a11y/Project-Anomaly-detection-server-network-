@@ -27,7 +27,7 @@ Isolation Forest, LOF, Z-score, IQR ทุกวิธีใช้ชุดฟ�
 **ไฟล์ที่ commit ไว้ใน repo แล้ว (ไม่ต้องรันก็เปิด dashboard ได้ทันที):**
 `models/isolation_forest.joblib`, `data/processed/scale_params.json`, `data/processed/replay_sample.csv`,
 `data/processed/evaluation_report*.csv`, `recall_by_anomaly_type.csv`, `cause_diagnosis_report.csv`,
-`robustness_sweep.csv`, `evaluation_scatter*.png`, `independent_test_set_v2.csv`
+`robustness_sweep.csv`, `model_comparison.csv`, `evaluation_scatter*.png`, `independent_test_set_v2.csv`
 ส่วนข้อมูลดิบ/ไฟล์ขั้นกลางขนาดใหญ่ถูก `.gitignore` ไว้ สร้างใหม่ได้ด้วยคำสั่งข้างบน
 **ถ้าแก้โมเดล/ข้อมูลแล้ว ต้อง commit ไฟล์พวกนี้ใหม่ด้วย** ไม่งั้นเว็บยังใช้ของเก่าอยู่
 
@@ -57,6 +57,25 @@ on readings flagged by the Isolation Forest the diagnosed cause matches the inje
 and about 93% for RESPONSE_DEGRADATION, and about 84% of false alarms are left unclassified. The rules were written around the
 simulated patterns, so these figures are optimistic for real systems.
 
+### เหตุการณ์รวม, ระดับความมั่นใจ และปุ่มป้อนกลับ (หน้า Alerts)
+
+- **เหตุการณ์ (incident):** ข้อมูลที่ถูกตรวจพบติดๆ กัน (ห่างกันไม่เกิน 3 รอบ) บนเซิร์ฟเวอร์เดียวกันถูกรวมเป็น 1 เหตุการณ์
+  (บน test split: 977 ข้อมูลที่ถูก flag เป็นเพียง 149 เหตุการณ์ เฉลี่ย 6.6 รายการต่อเหตุการณ์ เทียบเหตุการณ์จริง 70 ครั้ง)
+- **ระดับความมั่นใจ:** dashboard ใช้ทั้ง Isolation Forest และ Z-score ถ้าเห็นตรงกันถือเป็น "มั่นใจสูง" ถ้าเห็นฝ่ายเดียวระบุว่าเป็น
+  "ค่าใดค่าหนึ่งผิดปกติชัดเจน" (Z-score) หรือ "รูปแบบ/ช่วงเวลาผิดปกติ" (Isolation Forest) บนชุดอิสระ (เฉลี่ย 5 seed) ระดับมั่นใจสูงแม่น 99%
+  จับได้ 76.5% ของเหตุการณ์จริง ส่วน Isolation Forest ฝ่ายเดียวแม่นเพียง 27% (4–50%) ตัวเลขนี้มาจากสคริปต์ชั่วคราว ยังไม่อยู่ใน repo
+- **ปุ่มป้อนกลับ:** ผู้ใช้ตอบ "เป็นปัญหาจริง/เตือนผิด" ต่อเหตุการณ์ แล้วหน้านี้สรุปสัดส่วนที่เป็นจริงแยกตามระดับความมั่นใจ
+  เก็บอยู่ใน session เท่านั้น (ต้นแบบ ยังไม่บันทึกถาวร)
+- ข้อมูล live ใช้ชั่วโมงเดิมของข้อมูลที่ replay เป็นฟีเจอร์เวลา ไม่ใช่นาฬิกาปัจจุบัน ผลของเดโมจึงไม่เปลี่ยนตามเวลาที่เปิดใช้
+
+### การจูน hyperparameter
+
+`scripts/tune_isolation_forest.py` ทำ grid search 16 ชุดค่า (contamination, n_estimators, max_samples) บน validation split ตามเวลา
+ผล: `contamination` มีผลมากที่สุด (F1 บน validation: 0.01 → 0.49–0.50, 0.02 → 0.79–0.80, **0.03 → 0.83–0.88**, 0.05 → 0.59–0.61)
+ค่าที่ validation เลือก (`max_samples=512`) ดีขึ้นเฉลี่ย 5 seed เล็กน้อย (F1 test 0.860 → 0.877, ชุดอิสระ 0.719 → 0.750)
+แต่ชนะ default เพียง 3/5 และ 2/5 seed จึง**ไม่ได้นำมาใช้** โมเดลที่ deploy ใช้ค่า default (contamination 0.03, 200 ต้น)
+การใช้ป้ายคำตอบจูนเกณฑ์ทำได้เพราะข้อมูลเป็นข้อมูลจำลอง ในระบบจริงต้องอาศัยตัวอย่างที่มีคนยืนยัน (ปุ่มป้อนกลับ)
+
 ### Language switch (EN / TH)
 
 The dashboard sidebar has an EN / TH toggle. All UI text lives in `app/i18n.py` and the diagnosis texts in `diagnose.py`.
@@ -70,6 +89,8 @@ python Generate_data_AI.py                                    # -> independent_t
 python evaluate_independent.py --infile independent_test_set_v2.csv
 python retrain_with_independent.py --independent-infile independent_test_set_v2.csv   # ทดลอง retrain
 python scripts/robustness_sweep.py                             # ทดสอบความทนทานข้ามหลาย seed
+python scripts/model_comparison.py                             # ความไวต่อเกณฑ์, การรวมสองวิธี, stress test เชิงบริบท
+python scripts/tune_isolation_forest.py                        # grid search 16 ชุดค่าบน validation split ตามเวลา
 ```
 
 ผลที่ควรรายงานตามจริง:
@@ -84,6 +105,14 @@ python scripts/robustness_sweep.py                             # ทดสอบ
 4. **การ retrain วัดเทียบบนชุดแถวเดียวกัน** (`evaluation_report_retrain_holdout.csv`): โมเดลเดิมและโมเดลที่ retrain ถูกวัดบนครึ่งหลัง
    ของชุดอิสระเหมือนกัน (3,504 แถว) ได้ F1 0.294 → 0.447 ในการรันนี้ (รันเดียว ยังไม่ได้ทดสอบข้ามหลาย seed)
    `retrain_with_independent.py` เซฟโมเดลใหม่แยกไว้ ไม่ทับโมเดล deploy
+5. **ความไวต่อเกณฑ์ตัดสิน** (`model_comparison.csv`, 5 seed, บนชุดอิสระ): F1 ของ Isolation Forest เปลี่ยนมากตาม `contamination`
+   (0.01 → 0.28, 0.02 → 0.81, 0.03 → 0.72, 0.05 → 0.31) ส่วน Z-score นิ่งกว่าเมื่อเกณฑ์ตั้งแต่ 3.0 ขึ้นไป (F1 0.857–0.884)
+   แต่แย่เมื่อเกณฑ์ 2.5 (0.56) ตัวเลขนี้แสดงความไว ไม่ใช่ค่าที่ควรเลือกใช้ เพราะการเลือกเกณฑ์จากป้ายคำตอบของชุดทดสอบเป็นการจูนกับข้อสอบ
+6. **การรวมสองวิธี:** flag เมื่อทั้งสองเห็นตรงกัน (AND) ได้ F1 0.863 (0.846–0.891) precision 0.991 recall 0.765 นิ่งที่สุด
+   ส่วน flag เมื่อวิธีใดวิธีหนึ่งเห็น (OR) ได้ recall 0.918 แต่ precision 0.652
+7. **Stress test เชิงบริบท** (ออกแบบเอง: โหลดระดับกลางวันในช่วง 18:00–08:00 โดยแต่ละค่าไม่เกินช่วงปกติเมื่อดูแยกกัน):
+   Z-score แทบไม่จับได้เลย (recall 0.006–0.009) Isolation Forest จับระดับ strong ได้ 0.351 (0.270–0.470) และระดับ moderate ได้ 0.027
+   แสดงว่า Isolation Forest มีความสามารถเชิงบริบทที่ Z-score ไม่มี แต่จำกัด และ stress test นี้ออกแบบให้โมเดลที่ใช้ `hour` ได้เปรียบ จึงไม่ใช่หลักฐานบนระบบจริง
 
 ## 4) เปิด live dashboard
 

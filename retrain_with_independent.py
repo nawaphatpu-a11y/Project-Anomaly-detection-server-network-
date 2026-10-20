@@ -16,8 +16,10 @@ from sklearn.ensemble import IsolationForest
 from etl import (fix_data_errors, fix_timestamp_errors, handle_missing, add_time_features,
                   add_engineered_features, add_trend_feature, add_severity,
                   compute_role_baselines, add_role_relative_features)
+from detection import zscore_stats
 from evaluate_independent import MODEL_PATH, SCALE_PARAMS_PATH, metrics_row, score_with_bundle
-from train_model import NORMALIZE_COLS, ISO_FEATURE_COLS, fit_min_max, apply_min_max, time_based_split
+from train_model import (NORMALIZE_COLS, ISO_FEATURE_COLS, ZSCORE_FEATURE_COLS, fit_min_max, apply_min_max,
+                         time_based_split)
 
 
 def main():
@@ -99,6 +101,7 @@ def main():
         "server_ids": sorted(combined["server_id"].unique().tolist()),
         "server_roles": server_roles,
         "role_baselines": role_baselines,
+        "zscore_stats": zscore_stats(combined[ZSCORE_FEATURE_COLS].fillna(0), ZSCORE_FEATURE_COLS),
     }, args.model_out)
     print(f"Saved retrained model -> {args.model_out} (ยังไม่ได้ใช้แทนโมเดล deploy เดิม)")
 

@@ -17,6 +17,7 @@ from streamlit_autorefresh import st_autorefresh
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+from detection import SEVERITY_RANK, detection_source, group_incidents, zscore_flag
 from diagnose import cause_title, decode_signals, diagnose, format_signals, suggested_check
 from etl import SEVERITY_MAP, ROLE_METRICS
 from i18n import get_lang, t
@@ -159,8 +160,9 @@ def _feature_values(reading: dict, scale_params: dict, resp_history: deque, base
     network_total = reading["network_in"] + reading["network_out"]
     cpu_memory_ratio = reading["cpu_usage"] / reading["memory_usage"] if reading["memory_usage"] else 0.0
 
-    hour = reading["timestamp"].hour
-    day_of_week = reading["timestamp"].weekday()
+    clock = reading.get("source_timestamp", reading["timestamp"])
+    hour = clock.hour
+    day_of_week = clock.weekday()
     is_peak_hour = int(9 <= hour <= 17)
 
     if len(resp_history) >= 3:
@@ -195,6 +197,8 @@ def init_buffer():
     for counter in ("total_readings", "total_anomalies", "round", "server_cursor"):
         st.session_state.setdefault(counter, 0)
     st.session_state.setdefault("replay_cursors", {})
+    st.session_state.setdefault("reading_counts", {})
+    st.session_state.setdefault("feedback", {})
 
 
 @st.cache_resource
@@ -215,6 +219,7 @@ def _replay_reading(feed: ReplayFeed, server_id: str, cursors: dict):
         "network_out": float(record["network_out"]),
         "response_time": float(record["response_time"]),
         "_injected_type": injected,
+        "source_timestamp": pd.Timestamp(record["timestamp"]),
     }
     return reading, wrapped
 
@@ -252,6 +257,9 @@ def tick(n_new: int = 5):
             prob = ANOMALY_INJECT_PROB * _server_weight(server_id, server_ids)
             reading = _simulate_raw_reading(server_id, prob, role, role_baselines)
         reading["role"] = role
+        counts = st.session_state["reading_counts"]
+        counts[server_id] = counts.get(server_id, 0) + 1
+        reading["reading_no"] = counts[server_id]
 
         feature_values.append(_feature_values(reading, scale_params, hist, role_baselines))
         hist.append(reading["response_time"])
@@ -259,9 +267,12 @@ def tick(n_new: int = 5):
 
     X = pd.DataFrame([[values[c] for c in feature_cols] for values in feature_values], columns=feature_cols)
     scores = model.decision_function(X)
+    zstats = bundle.get("zscore_stats")
 
     for reading, values, score in zip(readings, feature_values, scores):
-        reading["is_anomaly"] = int(score < 0)
+        source = detection_source(bool(score < 0), bool(zstats) and zscore_flag(values, zstats))
+        reading["detection"] = source
+        reading["is_anomaly"] = int(source is not None)
         reading["anomaly_score"] = round(float(score), 4)
         reading["round"] = st.session_state["round"]
         if reading["is_anomaly"]:
@@ -274,6 +285,7 @@ def tick(n_new: int = 5):
             reading["signals_raw"] = None
             reading["severity_level"] = "None"
         reading.pop("_injected_type", None)
+        reading.pop("source_timestamp", None)
 
     new_df = pd.DataFrame(readings)
     st.session_state["total_readings"] += len(new_df)
@@ -352,3 +364,11 @@ def live_update(refresh, rows, paused, key):
 
 def show_wrapped_table(df):
     st.table(df.reset_index(drop=True).style.hide(axis="index"))
+
+
+def current_incidents():
+    return group_incidents(st.session_state.alerts, st.session_state["reading_counts"])
+
+
+def record_feedback(incident_id, verdict, detection):
+    st.session_state["feedback"][incident_id] = {"verdict": verdict, "detection": detection}

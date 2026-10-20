@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 import plotly.express as px
 import streamlit as st
 from i18n import column_labels, language_selector, t, type_label
-from utils import init_buffer, live_settings, live_update, localize_alerts, show_wrapped_table
+from utils import current_incidents, init_buffer, live_settings, live_update, localize_alerts, show_wrapped_table
 
 st.set_page_config(page_title="Server & Network Health", page_icon="📊", layout="wide")
 init_buffer()
@@ -34,10 +34,13 @@ total_anomalies = st.session_state["total_anomalies"]
 health_score = 100 * (1 - total_anomalies / total_readings) if total_readings else 100
 servers_online = df["server_id"].nunique()
 
-c1, c2, c3 = st.columns(3)
+incidents = current_incidents()
+
+c1, c2, c3, c4 = st.columns(4)
 c1.metric(t("metric.health"), f"{health_score:.1f}%", help=t("metric.health_help"))
 c2.metric(t("metric.anomalies"), f"{total_anomalies}")
-c3.metric(t("metric.servers"), f"{servers_online}")
+c3.metric(t("metric.incidents"), f"{len(incidents)}", help=t("metric.incidents_help"))
+c4.metric(t("metric.servers"), f"{servers_online}")
 
 st.divider()
 
@@ -134,13 +137,14 @@ if "role" in df.columns:
                  width="stretch")
 
 st.subheader(t("section.latest"))
-recent = localize_alerts(df[df["is_anomaly"] == 1].sort_values("timestamp", ascending=False).head(10))
+recent = localize_alerts(incidents.head(10).assign(is_anomaly=1))
 if not recent.empty:
+    recent["start"] = recent["start"].astype(str).str[:19]
     recent["alert_type"] = recent["alert_type"].map(type_label)
-    recent["timestamp"] = recent["timestamp"].astype(str).str[:19]
-    recent["anomaly_score"] = recent["anomaly_score"].astype(float).round(3)
-    shown = recent[["timestamp", "server_id", "role", "alert_type", "probable_cause", "top_signals",
-                    "suggested_check", "anomaly_score"]]
+    recent["detection"] = recent["detection"].map(lambda d: t(f"detection.{d}"))
+    recent["status"] = recent["status"].map(lambda s: t(f"status.{s}"))
+    shown = recent[["start", "server_id", "role", "alert_type", "detection", "readings", "status",
+                    "probable_cause", "suggested_check"]]
     show_wrapped_table(shown.rename(columns=column_labels(shown.columns)))
 else:
     st.success(t("ok.no_anomalies"))

@@ -453,3 +453,74 @@ def test_replay_sample_keeps_the_earliest_rows_of_each_server_and_the_needed_col
     assert list(sample.columns) == train_model.REPLAY_COLUMNS
     assert len(sample) == 8
     assert sorted(sample[sample.server_id == "A"]["cpu_usage"]) == [0.0, 1.0, 2.0, 3.0]
+
+
+import detection
+
+
+def test_zscore_flag_matches_the_benchmark_rule():
+    train = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0, 4.0] * 20, "b": [10.0, 10.0, 11.0, 9.0, 10.0] * 20})
+    stats = detection.zscore_stats(train, ["a", "b"], threshold=3.0)
+    assert detection.zscore_flag({"a": 2.0, "b": 10.0}, stats) is False
+    assert detection.zscore_flag({"a": 100.0, "b": 10.0}, stats) is True
+    assert detection.zscore_flag({"a": 2.0, "b": -50.0}, stats) is True
+    test = pd.DataFrame({"a": [2.0, 100.0], "b": [10.0, 10.0]})
+    benchmark = train_model.zscore_baseline(train, test, threshold=3.0)
+    assert [detection.zscore_flag(r, stats) for r in test.to_dict("records")] == [bool(x) for x in benchmark]
+
+
+def test_constant_feature_does_not_divide_by_zero():
+    train = pd.DataFrame({"a": [5.0] * 10})
+    stats = detection.zscore_stats(train, ["a"])
+    assert stats["std"]["a"] == 1
+    assert detection.zscore_flag({"a": 5.0}, stats) is False
+
+
+def test_detection_source_labels_each_combination():
+    assert detection.detection_source(True, True) == "both"
+    assert detection.detection_source(False, True) == "zscore"
+    assert detection.detection_source(True, False) == "forest"
+    assert detection.detection_source(False, False) is None
+
+
+def _alerts():
+    base = pd.Timestamp("2026-01-01 10:00:00")
+    rows = []
+    def add(server, no, kind, severity, source, score):
+        rows.append({"server_id": server, "reading_no": no, "timestamp": base + pd.Timedelta(minutes=no), "role": "Web Server",
+                     "alert_type": kind, "severity_level": severity, "detection": source, "anomaly_score": score,
+                     "signals_raw": f"cpu_usage_role_z:{abs(score) * 100:.1f}"})
+    for no in (10, 11, 12):
+        add("A", no, "CPU_SPIKE", "High", "forest" if no < 12 else "both", -0.05 * (no - 9))
+    add("A", 14, "Other", "Low", "forest", -0.01)
+    add("A", 40, "NETWORK_SURGE", "High", "zscore", 0.02)
+    add("B", 11, "Other", "Low", "forest", -0.02)
+    return pd.DataFrame(rows)
+
+
+def test_alerts_close_together_are_merged_into_one_incident():
+    incidents = detection.group_incidents(_alerts(), {"A": 41, "B": 60})
+    a = incidents[incidents["server_id"] == "A"].sort_values("start")
+    assert len(incidents) == 3
+    assert a.iloc[0]["readings"] == 4 and a.iloc[0]["alert_type"] == "CPU_SPIKE"
+    assert a.iloc[0]["detection"] == "both"
+    assert a.iloc[0]["incident_id"] == "A-10"
+    assert a.iloc[1]["alert_type"] == "NETWORK_SURGE" and a.iloc[1]["detection"] == "zscore"
+
+
+def test_incident_status_depends_on_how_recent_the_last_flagged_reading_is():
+    incidents = detection.group_incidents(_alerts(), {"A": 41, "B": 60}).set_index("incident_id")
+    assert incidents.loc["A-40", "status"] == "ongoing"
+    assert incidents.loc["A-10", "status"] == "ended"
+    assert incidents.loc["B-11", "status"] == "ended"
+
+
+def test_incident_uses_the_most_severe_reading_and_the_strongest_signal():
+    incidents = detection.group_incidents(_alerts(), {"A": 41, "B": 60}).set_index("incident_id")
+    assert incidents.loc["A-10", "severity_level"] == "High"
+    assert incidents.loc["A-10", "signals_raw"] == "cpu_usage_role_z:15.0"
+
+
+def test_no_alerts_gives_an_empty_incident_table_with_the_expected_columns():
+    empty = detection.group_incidents(pd.DataFrame())
+    assert empty.empty and list(empty.columns) == detection.INCIDENT_COLUMNS

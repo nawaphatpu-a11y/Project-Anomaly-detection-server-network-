@@ -14,6 +14,7 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 
+from detection import zscore_stats
 from etl import ROLE_METRICS, compute_role_baselines, add_role_relative_features
 
 NORMALIZE_COLS = [
@@ -102,7 +103,7 @@ def iqr_baseline(X_train: pd.DataFrame, X_test: pd.DataFrame, k: float = 1.5) ->
     return ((X_test < lower) | (X_test > upper)).any(axis=1).astype(int)
 
 
-REPLAY_COLUMNS = ["server_id", "role", "cpu_usage", "memory_usage", "network_in", "network_out",
+REPLAY_COLUMNS = ["server_id", "role", "timestamp", "cpu_usage", "memory_usage", "network_in", "network_out",
                   "response_time", "is_anomaly", "anomaly_type"]
 
 
@@ -201,6 +202,7 @@ def main():
         "server_ids": sorted(df["server_id"].unique().tolist()),
         "server_roles": server_roles,
         "role_baselines": deploy_role_baselines,
+        "zscore_stats": zscore_stats(df[ZSCORE_FEATURE_COLS].fillna(0), ZSCORE_FEATURE_COLS),
     }, args.model_out)
     print(f"Saved deployment model -> {args.model_out}")
 
